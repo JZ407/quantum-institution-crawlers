@@ -12,6 +12,11 @@ SOURCE = {
     "quantum_native": True,
     "max_pages": 5,
     "page_url_template": "?page={n}",
+    "tail_cut_patterns": [
+        r'\nView pricing\n',
+        r'\nKeep exploring\n',
+        r'\nView all blogs\n',
+    ],
 }
 
 if __name__ == '__main__':

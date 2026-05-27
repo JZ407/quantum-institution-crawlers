@@ -110,28 +110,33 @@ class BaseCrawler:
         return new_count
 
     # ---- Internal: LLM content cleaning ----
+    # Default tail noise patterns (can be overridden per source)
+    DEFAULT_TAIL_PATTERNS = [
+        r'\nView all posts by ',
+        r'\nAbout the Author',
+        r'\nAbout \w+ \w+\n',
+        r'\nComments\n',
+        r'\nComments are closed',
+        r'\nShare this:',
+        r'\nRelated posts:',
+        r'\nRelated articles:',
+        r'\nTags:',
+        r'\nCategories:',
+        r'\nPublished by ',
+        r'\nPosted in ',
+        r'\nLike this:',
+        r'\nSubscribe to',
+        r'\nNewsletter',
+        r'\nYou may also like',
+        r'\nRead more about',
+        r'\nAuthor:',
+    ]
+
     def _clean_tail(self, text: str) -> str:
-        """Rule-based removal of common footer noise: author bios, comments, related posts."""
+        """Rule-based removal of common footer noise.
+        Uses source-specific patterns if configured, otherwise defaults."""
         import re
-        # Patterns that indicate the start of footer noise
-        cut_patterns = [
-            r'\nView all posts by ',
-            r'\nAbout the Author',
-            r'\nAbout \w+ \w+\n',  # "About John Doe"
-            r'\nComments\n',
-            r'\nComments are closed',
-            r'\nShare this:',
-            r'\nRelated posts:',
-            r'\nRelated articles:',
-            r'\nTags:',
-            r'\nCategories:',
-            r'\nPublished by ',
-            r'\nPosted in ',
-            r'\nLike this:',
-            r'\nSubscribe to',
-            r'\nNewsletter',
-            r'\nYou may also like',
-        ]
+        cut_patterns = self.source.get('tail_cut_patterns', self.DEFAULT_TAIL_PATTERNS)
         # Find the earliest cut point across all patterns
         cut_at = len(text)
         for pattern in cut_patterns:

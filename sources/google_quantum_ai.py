@@ -10,6 +10,11 @@ SOURCE = {
     "url": "https://blog.google/sitemap.xml",
     "url_pattern": "quantum",
     "quantum_native": True,
+    "tail_cut_patterns": [
+        r'\nRelated posts\n',
+        r'\nQuantum computing\n',
+        r'\nBy\n',
+    ],
 }
 
 if __name__ == '__main__':

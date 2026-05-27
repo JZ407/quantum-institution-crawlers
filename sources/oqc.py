@@ -11,6 +11,10 @@ SOURCE = {
     "url_pattern": "/company/newsroom/",
     "quantum_native": True,
     "max_pages": 8,
+    "tail_cut_patterns": [
+        r'\nYOU MAY ALSO BE INTERESTED IN',
+        r'\nThe latest from the Newsroom',
+    ],
 }
 
 if __name__ == '__main__':

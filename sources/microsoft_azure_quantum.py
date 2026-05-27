@@ -6,10 +6,14 @@ from core.llm import get_llm
 
 SOURCE = {
     "name": "Microsoft Azure Quantum",
-    "type": "atom",
-    "url": "https://azure.microsoft.com/en-us/blog/quantum/feed/",
-    "url_pattern": "/blog/",
+    "type": "enterprise",
+    "url": "https://cloudblogs.microsoft.com/quantum/",
+    "url_pattern": "/quantum/",
     "quantum_native": True,
+    "tail_cut_patterns": [
+        r'\nNews\n',
+        r'\nAzure Quantum Elements\n',
+    ],
 }
 
 if __name__ == '__main__':
