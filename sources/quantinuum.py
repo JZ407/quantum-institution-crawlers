@@ -8,7 +8,7 @@ SOURCE = {
     "name": "Quantinuum",
     "type": "enterprise",
     "url": "https://www.quantinuum.com/news/blog",
-    "url_pattern": "/news/blog",
+    "url_pattern": "/blog/",
     "quantum_native": True,
     "max_pages": 5,
 }

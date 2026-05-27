@@ -388,7 +388,7 @@ class BaseCrawler:
             text = a.get_text(strip=True).lower()
             href = a['href']
             if any(k in text for k in ['next', 'older posts', 'older entries']):
-                if re.search(r'[?&]page=\d+', href):
+                if re.search(r'[?&]page=\d+|/page/\d+/', href):
                     if href.startswith('?') or href.startswith('/'):
                         return urljoin(base_url, href)
                     if href.startswith('http'):

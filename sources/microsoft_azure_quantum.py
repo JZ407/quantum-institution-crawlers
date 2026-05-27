@@ -7,9 +7,11 @@ from core.llm import get_llm
 SOURCE = {
     "name": "Microsoft Azure Quantum",
     "type": "enterprise",
-    "url": "https://cloudblogs.microsoft.com/quantum/",
+    "url": "https://azure.microsoft.com/en-us/blog/quantum/",
     "url_pattern": "/quantum/",
     "quantum_native": True,
+    "max_pages": 10,
+    "page_url_template": "page/{n}/",
     "tail_cut_patterns": [
         r'\nNews\n',
         r'\nAzure Quantum Elements\n',
