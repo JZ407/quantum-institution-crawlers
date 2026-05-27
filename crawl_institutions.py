@@ -21,6 +21,8 @@ SOURCES = [
         'article_selector': 'a',
         'url_pattern': '/quantum/blog/',
         'quantum_native': True,
+        'max_pages': 5,
+        'page_url_template': '?page={n}',
     },
     {
         'name': 'Quantinuum',
@@ -154,14 +156,18 @@ def _extract_articles_from_soup(soup, source: dict, base_url: str) -> list:
     return articles
 
 
-def _find_next_page(soup, base_url: str) -> str:
-    """Find next page URL from pagination links like ?hash_page=N or rel=next."""
-    # Priority 1: links whose href contains _page= (Quantinuum-style pagination)
+def _find_next_page(soup, base_url: str, current_page: int, page_template: str = '') -> str:
+    """Find next page URL from pagination links or URL template."""
+    next_page = current_page + 1
+    # Priority 0: explicit URL template (for JS-button pagination like IBM)
+    if page_template:
+        return base_url + page_template.format(n=next_page)
+    # Priority 1: explicit _page=N (Quantinuum) or page=N query params
     for a in soup.find_all('a', href=True):
-        if re.search(r'_page=\d+', a['href']):
-            text = a.get_text(strip=True).lower()
+        href = a['href']
+        text = a.get_text(strip=True).lower()
+        if re.search(rf'_page={next_page}\b', href):
             if any(k in text for k in ['view more', 'next', 'older']):
-                href = a['href']
                 if href.startswith('?'):
                     return base_url + href
                 if href.startswith('/'):
@@ -169,7 +175,25 @@ def _find_next_page(soup, base_url: str) -> str:
                 if href.startswith('http'):
                     return href
                 return requests.compat.urljoin(base_url, href)
-    # Priority 2: rel=next
+        if re.search(rf'[?&]page={next_page}\b', href) or a.get('data-page') == str(next_page):
+            if text.strip() == str(next_page) or 'page' in text:
+                if href.startswith('?') or href.startswith('/'):
+                    return requests.compat.urljoin(base_url, href)
+                if href.startswith('http'):
+                    return href
+                return requests.compat.urljoin(base_url, href)
+    # Priority 2: generic "next" text with page=N in href
+    for a in soup.find_all('a', href=True):
+        text = a.get_text(strip=True).lower()
+        href = a['href']
+        if any(k in text for k in ['next', 'older posts', 'older entries']):
+            if re.search(r'[?&]page=\d+', href):
+                if href.startswith('?') or href.startswith('/'):
+                    return requests.compat.urljoin(base_url, href)
+                if href.startswith('http'):
+                    return href
+                return requests.compat.urljoin(base_url, href)
+    # Priority 3: rel=next
     link = soup.find('link', rel='next')
     if link and link.get('href'):
         href = link['href']
@@ -195,7 +219,7 @@ def crawl_listing(source: dict) -> list:
         seen_urls = {a['url'] for a in articles}
         page_num = 1
         while page_num < max_pages:
-            next_url = _find_next_page(soup, base_url)
+            next_url = _find_next_page(soup, base_url, page_num, source.get('page_url_template', ''))
             if not next_url or next_url == base_url:
                 break
             page_num += 1
