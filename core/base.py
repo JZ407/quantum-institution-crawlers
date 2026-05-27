@@ -71,11 +71,16 @@ class BaseCrawler:
                     continue
 
                 detail = self._fetch_detail(art['url'])
-                content = detail['content']
+                raw_content = detail['content']
                 pub_date = detail['date'] or art['date']
                 best_title = art['title']
                 if detail.get('title') and len(detail['title']) > len(best_title):
                     best_title = detail['title']
+
+                # LLM cleaning: remove breadcrumbs, nav, social buttons, author lines
+                content = raw_content
+                if raw_content and self.client:
+                    content = self._clean_content(raw_content, best_title)
 
                 summary = content[:300].strip() if content else ''
                 summary_cn = ''
@@ -103,6 +108,36 @@ class BaseCrawler:
         db_module.log_run_end(self.conn, run_id, len(articles), new_count, duration, error_msg)
         db_module.update_crawl_log(self.conn, self.name, len(articles), new_count)
         return new_count
+
+    # ---- Internal: LLM content cleaning ----
+    def _clean_content(self, raw_text: str, title: str) -> str:
+        """Use LLM to strip nav/breadcrumbs/social buttons/author lines from article body.
+        Only the first ~3000 chars are cleaned (noise is at the top); the rest is kept as-is."""
+        noise_patterns = ['skip to main content', 'breadcrumb', 'share this',
+                          'english', '中文', 'like', 'discuss', 'L\nT\nF\nR\nE']
+        text_head = raw_text[:1000].lower().replace('\n', ' ')
+        has_noise = sum(1 for p in noise_patterns if p in text_head) >= 2
+        if not has_noise:
+            return raw_text
+
+        try:
+            # Only clean the head (noise is at the top), keep tail as-is
+            head = raw_text[:3000]
+            tail = raw_text[3000:] if len(raw_text) > 3000 else ''
+            clean_msg = [
+                {"role": "system", "content": (
+                    "你是文本清洗工具。删除以下文章中的导航面包屑、语言切换(English/中文)、"
+                    "社交分享按钮(Like/Discuss/L/T/F/R/E)、作者署名行、\"Skip to main content\"。"
+                    "保留文章标题和正文。不添加任何解释，只输出清洗后的文本。"
+                )},
+                {"role": "user", "content": f"标题：{title}\n\n{head}"},
+            ]
+            cleaned_head = self.client.chat(clean_msg).strip()
+            if len(cleaned_head) < len(head) * 0.3:
+                return raw_text
+            return cleaned_head + tail
+        except Exception:
+            return raw_text
 
     # ---- Internal: fetch detail page ----
     def _fetch_detail(self, url: str) -> dict:
