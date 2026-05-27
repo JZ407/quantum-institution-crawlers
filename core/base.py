@@ -110,20 +110,53 @@ class BaseCrawler:
         return new_count
 
     # ---- Internal: LLM content cleaning ----
+    def _clean_tail(self, text: str) -> str:
+        """Rule-based removal of common footer noise: author bios, comments, related posts."""
+        import re
+        # Patterns that indicate the start of footer noise
+        cut_patterns = [
+            r'\nView all posts by ',
+            r'\nAbout the Author',
+            r'\nAbout \w+ \w+\n',  # "About John Doe"
+            r'\nComments\n',
+            r'\nComments are closed',
+            r'\nShare this:',
+            r'\nRelated posts:',
+            r'\nRelated articles:',
+            r'\nTags:',
+            r'\nCategories:',
+            r'\nPublished by ',
+            r'\nPosted in ',
+            r'\nLike this:',
+            r'\nSubscribe to',
+            r'\nNewsletter',
+            r'\nYou may also like',
+        ]
+        # Find the earliest cut point across all patterns
+        cut_at = len(text)
+        for pattern in cut_patterns:
+            m = re.search(pattern, text)
+            if m and m.start() < cut_at:
+                cut_at = m.start()
+        return text[:cut_at] if cut_at < len(text) else text
+
     def _clean_content(self, raw_text: str, title: str) -> str:
-        """Use LLM to strip nav/breadcrumbs/social buttons/author lines from article body.
-        Only the first ~3000 chars are cleaned (noise is at the top); the rest is kept as-is."""
+        """LLM clean head + rule-based clean tail."""
+        # 1. Rule-based tail cleaning
+        text = self._clean_tail(raw_text)
+
+        # 2. Check if head needs LLM cleaning
         noise_patterns = ['skip to main content', 'breadcrumb', 'share this',
                           'english', '中文', 'like', 'discuss', 'L\nT\nF\nR\nE']
-        text_head = raw_text[:1000].lower().replace('\n', ' ')
+        text_head = text[:1000].lower().replace('\n', ' ')
         has_noise = sum(1 for p in noise_patterns if p in text_head) >= 2
         if not has_noise:
-            return raw_text
+            return text
 
+        # 3. LLM clean the head only
         try:
-            # Only clean the head (noise is at the top), keep tail as-is
-            head = raw_text[:3000]
-            tail = raw_text[3000:] if len(raw_text) > 3000 else ''
+            head = text[:3000]
+            middle = text[3000:] if len(text) > 3000 else ''
             clean_msg = [
                 {"role": "system", "content": (
                     "你是文本清洗工具。删除以下文章中的导航面包屑、语言切换(English/中文)、"
@@ -134,10 +167,10 @@ class BaseCrawler:
             ]
             cleaned_head = self.client.chat(clean_msg).strip()
             if len(cleaned_head) < len(head) * 0.3:
-                return raw_text
-            return cleaned_head + tail
+                return text
+            return cleaned_head + middle
         except Exception:
-            return raw_text
+            return text
 
     # ---- Internal: fetch detail page ----
     def _fetch_detail(self, url: str) -> dict:
