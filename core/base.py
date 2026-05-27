@@ -77,13 +77,20 @@ class BaseCrawler:
                 if detail.get('title') and len(detail['title']) > len(best_title):
                     best_title = detail['title']
 
-                # LLM: clean + restore paragraphs + generate CN summary (single call)
                 content = raw_content
                 summary = content[:300].strip() if content else ''
                 summary_cn = ''
-                if raw_content and self.client:
-                    content, summary_cn = self._clean_and_summarize(raw_content, best_title)
-                    summary = content[:300].strip() if content else ''
+                if content and self.client:
+                    try:
+                        cn_msg = [
+                            {"role": "system", "content": "你是量子科技翻译专家。请将以下英文文章内容总结为一句话中文摘要（100字以内）。只输出中文，不要解释。"},
+                            {"role": "user", "content": f"标题：{best_title}\n\n内容：{content[:2000]}"},
+                        ]
+                        summary_cn = self.client.chat(cn_msg).strip()
+                        if len(summary_cn) > 200:
+                            summary_cn = summary_cn[:200]
+                    except Exception:
+                        pass
 
                 try:
                     db_module.insert_article(self.conn, best_title, content, art['url'],
@@ -100,11 +107,27 @@ class BaseCrawler:
 
     # ---- Internal: Unified LLM cleaning + summarization ----
     def _clean_and_summarize(self, raw_text: str, title: str) -> tuple:
-        """Single LLM call: full-text cleaning + paragraph restoration + CN summary.
+        """Clean head via LLM + rule-cut tail + generate CN summary.
+        Middle body is kept as-is (usually clean content).
         Returns (cleaned_text, summary_cn)."""
+        # 1. Rule-based tail cut
         text = self._clean_tail(raw_text)
         if not text:
             return raw_text, ''
+
+        # 2. Only LLM-clean the head (first 2000 chars) and tail (last 800 chars)
+        # Middle is actual content, usually clean enough
+        HEAD_LIMIT = 2000
+        TAIL_LIMIT = 800
+        if len(text) <= HEAD_LIMIT + TAIL_LIMIT + 500:
+            # Short article: clean the whole thing
+            clean_input = text
+            middle = ''
+        else:
+            head = text[:HEAD_LIMIT]
+            tail = text[-TAIL_LIMIT:]
+            middle = text[HEAD_LIMIT:-TAIL_LIMIT]
+            clean_input = head + '\n...[MIDDLE]...\n' + tail
 
         try:
             msg = [
@@ -112,23 +135,24 @@ class BaseCrawler:
                     "你是量子科技文章编辑。请整理以下网页抓取的文本，并输出：\n\n"
                     "[CLEANED]\n整理后的正文（恢复自然段落，去除噪音）\n[/CLEANED]\n"
                     "[SUMMARY]\n一句中文摘要（100字内）\n[/SUMMARY]\n\n"
-                    "整理规则：删除导航面包屑、English/中文切换、社交按钮、作者署名、"
-                    "文末作者简介/评论/相关文章推荐/Tags标签。根据语义恢复自然段落。"
-                    "不要添加任何解释。"
+                    "规则：删除导航面包屑、English/中文切换、社交按钮、作者署名。"
+                    "恢复自然段落。...[MIDDLE]...表示中段正文已省略，保留该标记。"
                 )},
-                {"role": "user", "content": f"标题：{title}\n\n{text}"},
+                {"role": "user", "content": f"标题：{title}\n\n{clean_input}"},
             ]
-            # Full article needs more output tokens
-            resp = self.client.chat(msg, max_tokens=8192).strip()
+            resp = self.client.chat(msg).strip()
 
             import re as _re
             cm = _re.search(r'\[CLEANED\]\s*(.*?)\s*\[/CLEANED\]', resp, _re.DOTALL)
             sm = _re.search(r'\[SUMMARY\]\s*(.*?)\s*\[/SUMMARY\]', resp, _re.DOTALL)
             if cm:
                 cleaned = cm.group(1).strip()
+                # Restore middle section
+                if middle and '...[MIDDLE]...' in cleaned:
+                    cleaned = cleaned.replace('...[MIDDLE]...', middle)
                 summary_cn = sm.group(1).strip()[:200] if sm else ''
             else:
-                cleaned = resp
+                cleaned = resp + middle if resp else text
                 summary_cn = ''
 
             if len(cleaned) < len(text) * 0.2 and len(text) > 500:
