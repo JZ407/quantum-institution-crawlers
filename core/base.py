@@ -79,22 +79,24 @@ class BaseCrawler:
 
                 content = raw_content
                 summary = content[:300].strip() if content else ''
-                summary_cn = ''
-                if content and self.client:
+
+                # Translate title to Chinese
+                title_cn = ''
+                if best_title and self.client and not any('一' <= c <= '鿿' for c in best_title[:20]):
                     try:
-                        cn_msg = [
-                            {"role": "system", "content": "你是量子科技翻译专家。请将以下英文文章内容总结为一句话中文摘要（100字以内）。只输出中文，不要解释。"},
-                            {"role": "user", "content": f"标题：{best_title}\n\n内容：{content[:2000]}"},
+                        tn_msg = [
+                            {"role": "system", "content": "将以下英文新闻标题翻译为中文。只输出中文，不要解释。"},
+                            {"role": "user", "content": best_title},
                         ]
-                        summary_cn = self.client.chat(cn_msg).strip()
-                        if len(summary_cn) > 200:
-                            summary_cn = summary_cn[:200]
+                        title_cn = self.client.chat(tn_msg).strip()
+                        if len(title_cn) > 200:
+                            title_cn = title_cn[:200]
                     except Exception:
                         pass
 
                 try:
                     db_module.insert_article(self.conn, best_title, content, art['url'],
-                                             self.name, pub_date, summary, summary_cn)
+                                             self.name, pub_date, summary, title_cn)
                     new_count += 1
                 except Exception:
                     pass

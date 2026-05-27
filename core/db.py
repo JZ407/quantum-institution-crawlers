@@ -26,6 +26,10 @@ def init_db():
         c.execute('ALTER TABLE articles ADD COLUMN summary_cn TEXT')
     except sqlite3.OperationalError:
         pass
+    try:
+        c.execute('ALTER TABLE articles ADD COLUMN title_cn TEXT')
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
     return conn
 
@@ -34,11 +38,11 @@ def is_new_url(conn, url: str) -> bool:
     c.execute('SELECT id FROM articles WHERE url=?', (url,))
     return c.fetchone() is None
 
-def insert_article(conn, title, content, url, source, publish_date, summary='', summary_cn=''):
+def insert_article(conn, title, content, url, source, publish_date, summary='', title_cn=''):
     c = conn.cursor()
-    c.execute('''INSERT INTO articles (title, content, url, source, publish_date, summary, summary_cn)
+    c.execute('''INSERT INTO articles (title, content, url, source, publish_date, summary, title_cn)
                 VALUES (?, ?, ?, ?, ?, ?, ?)''',
-             (title, content, url, source, publish_date, summary, summary_cn))
+             (title, content, url, source, publish_date, summary, title_cn))
     conn.commit()
 
 
