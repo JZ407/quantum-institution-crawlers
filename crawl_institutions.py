@@ -50,8 +50,8 @@ SOURCES = [
     },
     {
         'name': 'NVIDIA Quantum',
-        'type': 'enterprise',
-        'url': 'https://developer.nvidia.com/blog/tag/quantum-computing/',
+        'type': 'atom',
+        'url': 'https://developer.nvidia.com/blog/tag/quantum-computing/feed/',
         'article_selector': 'a',
         'url_pattern': '/blog/',
         'quantum_native': True,
@@ -71,9 +71,14 @@ def init_db():
         publish_date TEXT,
         tags TEXT,
         summary TEXT,
+        summary_cn TEXT,
         fetch_status TEXT DEFAULT 'listed',
         fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
+    try:
+        c.execute('ALTER TABLE articles ADD COLUMN summary_cn TEXT')
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
     return conn
 
@@ -83,6 +88,36 @@ def get_llm():
     cfg = yaml.safe_load(open(cfg_path, encoding='utf-8'))['llm']
     return LLMClient(provider='openai', api_key=cfg['api_key'], api_base=cfg['api_base'],
                      model=cfg['model'], max_tokens=2048, timeout=120)
+
+
+def crawl_atom(source: dict) -> list:
+    """Crawl an Atom/RSS feed, return [{title, url, date}]."""
+    try:
+        resp = requests.get(source['url'], headers=HEADERS, timeout=30)
+        if resp.status_code != 200:
+            print(f'  HTTP {resp.status_code}')
+            return []
+        soup = BeautifulSoup(resp.text, 'xml')
+        articles = []
+        keyword = source['url_pattern'].lower()
+        for entry in soup.find_all(['entry', 'item']):
+            title = (entry.find('title') or {}).text if entry.find('title') else ''
+            link_el = entry.find('link')
+            link = ''
+            if link_el:
+                link = link_el.get('href', '') or link_el.text or ''
+            pub_el = entry.find('published') or entry.find('pubDate')
+            pub = pub_el.text if pub_el else ''
+            if link and keyword in link.lower():
+                articles.append({
+                    'title': title.strip(),
+                    'url': link.strip(),
+                    'date': pub[:10] if pub else '',
+                })
+        return articles
+    except Exception as e:
+        print(f'  Error: {e}')
+        return []
 
 
 def crawl_sitemap(source: dict) -> list:
@@ -324,6 +359,34 @@ def _extract_page_title(soup) -> str:
     return ''
 
 
+def _extract_body(soup) -> str:
+    """Extract clean article body text from common content containers."""
+    # Try semantic article containers first
+    for selector in ['article', '[role=main]', 'main',
+                     '[class*=article-body]', '[class*=post-body]',
+                     '[class*=entry-content]', '[class*=blog-content]',
+                     '[class*=article-content]', '[class*=post-content]']:
+        el = soup.select_one(selector)
+        if el:
+            # Remove nested nav/footer within article
+            for tag in el.find_all(['script', 'style', 'nav', 'footer', 'aside',
+                                     'header', '.sidebar', '.related-posts',
+                                     '.comments', '.social-share']):
+                tag.decompose()
+            text = el.get_text(separator='\n', strip=True)
+            if len(text) > 300:
+                return text
+    # Fallback: remove noise elements from full page
+    for tag in soup.find_all(['script', 'style', 'nav', 'footer', 'header',
+                               'aside', '.sidebar', '.menu', '.navigation',
+                               '.related', '.comments', '.footer']):
+        tag.decompose()
+    text = soup.get_text(separator='\n', strip=True)
+    # Clean up: remove short lines, collapse whitespace
+    lines = [l.strip() for l in text.split('\n') if len(l.strip()) > 30]
+    return '\n'.join(lines)
+
+
 def fetch_detail(url: str) -> dict:
     """Fetch article detail page content, date, and real title."""
     try:
@@ -331,12 +394,11 @@ def fetch_detail(url: str) -> dict:
         if resp.status_code != 200:
             return {'content': '', 'date': '', 'title': ''}
         soup = BeautifulSoup(resp.text, 'html.parser')
-        for tag in soup.find_all(['script', 'style', 'nav', 'footer']):
-            tag.decompose()
-        text = soup.get_text(separator='\n', strip=True)
-        content = text[:3000] if len(text) > 3000 else text
-        d = _extract_date(soup, text)
+        d = _extract_date(soup, '')
         t = _extract_page_title(soup)
+        body = _extract_body(soup)
+        # Keep up to 5000 chars, prefer article body over raw page text
+        content = body[:5000] if len(body) > 5000 else body
         return {'content': content, 'date': d, 'title': t}
     except Exception:
         return {'content': '', 'date': '', 'title': ''}
@@ -387,6 +449,8 @@ def main():
         print(f'\n[CRAWL] {s_name}: {s_url}')
         if src.get('type') == 'sitemap':
             articles = crawl_sitemap(src)
+        elif src.get('type') == 'atom':
+            articles = crawl_atom(src)
         else:
             articles = crawl_listing(src)
         print(f'  Found {len(articles)} articles')
@@ -414,13 +478,25 @@ def main():
             if detail.get('title') and len(detail['title']) > len(best_title):
                 best_title = detail['title']
 
-            # Simple LLM summary for search indexing
+            # Generate Chinese summary via LLM
             summary = content[:300].strip() if content else ''
+            summary_cn = ''
+            if content:
+                try:
+                    cn_msg = [
+                        {"role": "system", "content": "你是量子科技翻译专家。请将以下英文文章内容总结为一句话中文摘要（100字以内）。只输出中文，不要解释。"},
+                        {"role": "user", "content": f"标题：{best_title}\n\n内容：{content[:2000]}"},
+                    ]
+                    summary_cn = client.chat(cn_msg).strip()
+                    if len(summary_cn) > 200:  # sanity check
+                        summary_cn = summary_cn[:200]
+                except Exception:
+                    pass
 
             try:
-                c.execute('''INSERT INTO articles (title, content, url, source, publish_date, summary)
-                            VALUES (?, ?, ?, ?, ?, ?)''',
-                         (best_title, content, art['url'], s_name, pub_date, summary))
+                c.execute('''INSERT INTO articles (title, content, url, source, publish_date, summary, summary_cn)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                         (best_title, content, art['url'], s_name, pub_date, summary, summary_cn))
                 total_new += 1
             except sqlite3.IntegrityError:
                 pass
