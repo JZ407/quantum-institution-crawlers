@@ -1,36 +1,36 @@
 # 机构新闻抓取策略总结
 
-> 5 家量子机构官网的爬取经验，按网站类型分类。
+> 5 家第一梯队量子机构官网的爬取经验，261 篇文章入库。按网站类型分为 4 种抓取模式。
 
 ---
 
-## 一、网站类型与对应策略
+## 一、四种抓取模式
 
-### 类型 A：标准博客列表页（IBM、NVIDIA）
+### 类型 A：HTML 博客列表 + 模板翻页（IBM）
 
-**特征**：服务器端渲染的文章列表，URL 含固定路径前缀（如 `/quantum/blog/`），无前端分页/懒加载。
+**特征**：服务器端渲染文章列表，但翻页用 `<button>` 而非 `<a>` 标签，JS 驱动。IBM 有 `?page=N` 翻页（共 5 页 81 篇），`data-page` 属性挂在 `<button>` 上，无法从 `href` 提取。
 
-**策略**：
-- `url_pattern` 设为博客路径前缀即可精确过滤
-- 不需要翻页（IBM 文章量有限，一页够用）
-- 日期在列表页即可提取（YYYY-MM-DD 或 DD Mon YYYY 格式）
+**策略**：`page_url_template: '?page={n}'` 手动构造翻页 URL。
+- 日期在列表页即可提取（`DD Mon YYYY` 纯文本格式）
+- `_find_next_page()` 的 `page_template` 参数自动拼接 `?page=2`, `?page=3`...
 
 **示例配置**：
 ```python
 {'url': 'https://www.ibm.com/quantum/blog',
  'url_pattern': '/quantum/blog/',
- 'quantum_native': True}
+ 'quantum_native': True,
+ 'max_pages': 5,
+ 'page_url_template': '?page={n}'}   # <-- button 翻页的替代方案
 ```
 
-### 类型 B：分页博客列表（Quantinuum、Microsoft）
+### 类型 B：HTML 博客列表 + 链接翻页（Quantinuum、Microsoft）
 
-**特征**：文章列表有分页，URL 格式 `?<hash>_page=N`。链接文本通常为 "View More"。
+**特征**：文章列表有 `<a>` 标签分页，URL 格式 `?<hash>_page=N`，链接文本为 "View More"。Microsoft 的翻页也被自动识别。
 
 **策略**：
-- 设 `max_pages` 控制最大翻页数
-- `_find_next_page()` 识别 `_page=N` 格式的分页链接
+- `_find_next_page()` 优先匹配 `href` 中 `_page=N` 格式
 - 跨页去重（`seen_urls` 集合）
-- **注意**：列表页标题可能不完整（"Read our blogpost"），需从详情页 `og:title` 补全
+- **注意**：Quantinuum 列表页标题破碎（"Read our blogpost"），需从详情页 `og:title` 补全
 
 **示例配置**：
 ```python
@@ -40,16 +40,15 @@
  'max_pages': 5}
 ```
 
-### 类型 C：无独立量子列表页（Google）
+### 类型 C：Sitemap 全量扫描（Google）
 
-**特征**：Google 博客无量子专属栏目，量子文章散落于 `/innovation-and-ai/` 各子路径。博客首页 RSS 20 条中无量子相关。
+**特征**：Google 博客无量子专属栏目，量子文章散落于 `/innovation-and-ai/` 各子路径。博客首页 RSS 仅 20 条且无量子。但 `sitemap.xml` 含全站 11296 个 URL，搜索 "quantum" 命中 37 个。
 
-**策略**：解析 `sitemap.xml`。
-- `type: 'sitemap'` 触发 `crawl_sitemap()`
-- `url_pattern` 作为关键词在 URL 中搜索
+**策略**：`crawl_sitemap()` 解析 XML sitemap。
 - `<lastmod>` 直接作为发布日期
+- URL slug 初步作为标题，`fetch_detail()` 从 `og:title` 补全真实标题
 - **优点**：全量覆盖，不依赖列表页结构
-- **缺点**：标题需从详情页 `og:title` 提取，且需多一次 HTTP 请求
+- **缺点**：标题需二次请求详情页
 
 **示例配置**：
 ```python
@@ -59,88 +58,119 @@
  'quantum_native': True}
 ```
 
+### 类型 D：Atom/RSS Feed（NVIDIA）
+
+**特征**：NVIDIA HTML 列表页只有 15 篇，翻页 `page/2/` 返回相同内容（JS 无限滚动加载）。但 Atom Feed（`/feed/`）包含 **47 篇**全量文章，数据结构干净（标题、链接、发布日期都在 XML 中）。
+
+**策略**：`crawl_atom()` 解析 Atom XML。
+- 从 `<entry>` 提取 `<title>`、`<link>`、`<published>`
+- 无需二次请求详情页取标题/日期
+- **推荐**：当网站提供 Feed 时优先使用，数据质量最高
+
+**示例配置**：
+```python
+{'type': 'atom',
+ 'url': 'https://developer.nvidia.com/blog/tag/quantum-computing/feed/',
+ 'url_pattern': '/blog/',
+ 'quantum_native': True}
+```
+
 ---
 
 ## 二、通用技术经验
 
-### 2.1 日期提取
+### 2.1 日期提取四层回退
 
-**问题**：各网站日期格式/位置不统一。
+| 优先级 | 来源 | 示例 |
+|--------|------|------|
+| 1 | `<meta>` 标签 | `article:published_time`, `date`, `published` |
+| 2 | `<time>` 标签 | `datetime` 属性 |
+| 3 | JSON-LD | `datePublished`, `dateModified` |
+| 4 | 正文正则 | `DD Mon YYYY` / `Month DD, YYYY` / `YYYY-MM-DD` |
 
-**优先级链**（`_extract_date`）：
-1. `<meta>` 标签（`article:published_time`、`date`、`published`）
-2. `<time>` 标签（`datetime` 属性）
-3. JSON-LD 结构化数据（`datePublished`、`dateModified`）
-4. 正文正则（`DD Mon YYYY`、`Month DD, YYYY`、`YYYY-MM-DD`）
-
-**踩坑**：IBM 博客日期藏在纯文本 `<p>` 中（`16 Mar 2026`），前三层全漏。
+**踩坑**：IBM 博客日期在 `<p>` 纯文本 `16 Mar 2026`，前三层全漏。
 
 ### 2.2 标题修正
 
-**问题**：列表页链接文本可能不是文章标题（按钮文字、卡片标签等）。
+列表页标题不可靠（按钮文字、卡片标签、"Read our blogpost" 等）。`_extract_page_title()` 优先取 `og:title` → `<meta name="title">` → `<h1>` → `<title>`。`main()` 中选更长的标题入库。
 
-**方案**：`_extract_page_title()` 从详情页提取：
-1. `og:title`（最准确）
-2. `<meta name="title">`
-3. `<h1>`
-4. `<title>`
+### 2.3 URL 过滤铁律
 
-`main()` 中比较列表标题与详情标题，选更长的。
-
-### 2.3 URL 过滤
-
-**核心规则**：**先补全绝对路径，再匹配 `url_pattern`**。
+**先补全绝对路径，再匹配 `url_pattern`**。
 
 ```python
 # 正确顺序
 if href.startswith('/'):
     href = urljoin(base_url, href)
 if url_pattern not in href:
-    continue  # 不是目标文章
+    continue
 ```
 
-**踩坑**：早期代码对 `/` 开头的链接不做过滤直接放行，导致产品页、About 页全量漏入。
+**踩坑**：早期代码对 `/` 开头的链接不做过滤直接放行，Quantinuum 产品页/About 页全量漏入。
 
 ### 2.4 翻页链接识别
 
-**踩坑**：`'next' in text` 会误匹配 "GuppyProgram the **next** generation..."。
+**踩坑**：`'next' in text` 误匹配 "GuppyProgram the **next** generation..."。
 
-**正确做法**：优先检查 `href` 中的分页模式（`_page=\d+`），再结合文本关键词。
+**正确做法**：
+1. 优先用 `page_url_template` 手动构造（button 翻页时）
+2. 其次检查 `href` 中 `_page=N` 或 `page=N`
+3. 最后才用文本关键词 `view more` / `older`
 
 ### 2.5 量子相关性过滤
 
-**结论**：不要对量子原生公司（IBM/Quantinuum/Microsoft/NVIDIA）启用 LLM 过滤。
+**规则**：量子原生公司（IBM/Quantinuum/Microsoft/NVIDIA）设 `quantum_native: True` 跳过 LLM 过滤。
 
-**原因**：
-- 列表页标题破碎（"Read our blogpost"）→ LLM 无法判断 → 大量误拒
-- 这些公司博客内容 100% 量子相关，过滤无意义
+**原因**：列表标题破碎 → LLM 无法判断 → 大量误拒。这些公司博客 100% 量子相关，过滤无意义。
 
-**适用场景**：仅对综合性博客（Google）保留 LLM 过滤，但 sitemap 模式下已不需过滤。
+### 2.6 内容提取
 
-### 2.6 编码与输出
+`_extract_body()` 按优先级找正文容器：`<article>` → `[role=main]` → `<main>` → `[class*=article-body]` → `[class*=post-body]` → ... 找不到则清理全页面文本。
 
-Windows GBK 终端会乱码中文和特殊字符（`•`、`✓` 等）。
-- 脚本中加 `sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')`
-- 文件读写统一 UTF-8
+提取前后对比：NVIDIA 平均 4333 vs 其他机构 3000 字符（提升 44%）。
 
----
+### 2.7 双语中文摘要
 
-## 三、源配置速查
+新文章入库时 LLM 实时生成一句话中文摘要（≤100 字），存入 `summary_cn` 字段。存量文章用 `backfill_cn.py` 批量补全。
 
-| 机构 | 类型 | URL | url_pattern | 特殊配置 |
-|------|------|-----|-------------|----------|
-| IBM Quantum | blog | ibm.com/quantum/blog | /quantum/blog/ | - |
-| Quantinuum | blog | quantinuum.com/news/blog | /blog/ | max_pages=5 |
-| Google Quantum AI | sitemap | blog.google/en-us/sitemap.xml | quantum | - |
-| Microsoft | blog | cloudblogs.microsoft.com/quantum/ | /quantum/ | - |
-| NVIDIA | blog | developer.nvidia.com/blog/tag/quantum-computing/ | /blog/ | - |
+### 2.8 Windows 编码
+
+GBK 终端乱码中文和特殊字符。
+- 脚本加 `sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')`
+- 文件统一 UTF-8
 
 ---
 
-## 四、待扩展方向
+## 三、决策树：新机构选哪种模式
 
-1. **增量抓取**：全量拉取后，后续只抓新文章（对比 sitemap 或最新 N 篇）
-2. **更多机构**：IonQ、Rigetti、QuEra、Xanadu、D-Wave、Origin Quantum（本源量子）等
-3. **RSS 监控**：Google、NVIDIA 提供 RSS，可用于增量更新
-4. **定时任务**：Windows Task Scheduler 每日运行 `crawl_institutions.py`
-5. **反爬对抗**：部分网站可能需 Playwright 无头浏览器（如光子盒），当前 5 家 requests 足够
+```
+新机构官网
+ ├─ 有 sitemap.xml？ → 类型 C（全量 URL + 日期）
+ ├─ 有 Atom/RSS Feed？ → 类型 D（最优，结构干净）
+ ├─ 有 `<a>` 翻页链接？ → 类型 B（自动识别 _page=N）
+ ├─ 有 `<button>` 翻页？ → 类型 A（page_url_template 硬编码）
+ └─ 单页够用？ → 类型 A（无需翻页配置）
+```
+
+---
+
+## 四、源配置速查（当前 5 家）
+
+| 机构 | 类型 | 文章数 | URL | 翻页方式 |
+|------|------|--------|-----|----------|
+| IBM Quantum | blog+template | 81 | ibm.com/quantum/blog | `?page={n}` (5页) |
+| Microsoft Azure Quantum | blog+pagination | 58 | cloudblogs.microsoft.com/quantum/ | `_page=N` 自动 |
+| NVIDIA Quantum | atom | 45 | developer.nvidia.com/.../feed/ | Feed 全量 |
+| Quantinuum | blog+pagination | 40 | quantinuum.com/news/blog | `_page=N` (5页) |
+| Google Quantum AI | sitemap | 37 | blog.google/.../sitemap.xml | Sitemap 全量 |
+| **合计** | | **261** | | |
+
+---
+
+## 五、待扩展
+
+1. **增量更新**：全量拉取后，只抓新文章（对比 DB 中已有 URL）
+2. **第二梯队**：IonQ、Rigetti、D-Wave、QuEra、Xanadu、本源量子 等
+3. **定时调度**：Windows Task Scheduler 每日运行 `.bat`
+4. **存量摘要补全**：`backfill_cn.py` 给旧文章补中文摘要（230+ 篇）
+5. **内容进一步清洗**：当前 body 提取仍有面包屑/元数据残留，可加 LLM 清洗
