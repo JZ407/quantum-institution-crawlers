@@ -6,10 +6,11 @@ from core.llm import get_llm
 
 SOURCE = {
     "name": "OQC",
-    "type": "atom",
-    "url": "https://oqc.tech/feed/",
-    "url_pattern": "/",
+    "type": "enterprise",
+    "url": "https://oqc.tech/company/newsroom/",
+    "url_pattern": "/company/newsroom/",
     "quantum_native": True,
+    "max_pages": 8,
 }
 
 if __name__ == '__main__':

@@ -614,12 +614,8 @@ def generate_source_file(result: dict, output_dir: str = None) -> str:
     if output_dir is None:
         output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sources')
 
-    # Derive filename from name
+    # Derive filename from name (just lowercase + underscores)
     filename = cfg['name'].lower().replace(' ', '_').replace('-', '_') + '.py'
-    # Remove common suffixes
-    for suf in ['_quantum', '_quantum_ai', '_quantum_computing']:
-        if filename.endswith(suf + '.py'):
-            filename = filename[:-len(suf)] + '.py'
 
     # Build extra config lines
     extra_lines = []

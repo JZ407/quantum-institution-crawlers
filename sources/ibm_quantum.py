@@ -8,10 +8,10 @@ SOURCE = {
     "name": "IBM Quantum",
     "type": "enterprise",
     "url": "https://www.ibm.com/quantum/blog",
-    "url_pattern": "/quantum/blog/",
+    "url_pattern": "/quantum/blog",
     "quantum_native": True,
-        "max_pages": 5,
-        "page_url_template": "?page={n}",
+    "max_pages": 5,
+    "page_url_template": "?page={n}",
 }
 
 if __name__ == '__main__':
