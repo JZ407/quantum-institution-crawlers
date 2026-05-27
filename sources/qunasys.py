@@ -8,7 +8,7 @@ SOURCE = {
     "name": "QunaSys",
     "type": "enterprise",
     "url": "https://qunasys.com/news",
-    "url_pattern": "/news/",
+    "url_pattern": "/news",
     "quantum_native": True,
 }
 

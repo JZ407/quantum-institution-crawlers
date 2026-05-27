@@ -581,14 +581,82 @@ def _print_result(result: dict):
         print(f"  {json.dumps(result['config'], indent=2, ensure_ascii=False)}")
 
 
+SOURCE_TEMPLATE = '''"""Crawl {name} news."""
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from core.base import BaseCrawler
+from core.llm import get_llm
+
+SOURCE = {{
+    "name": "{name}",
+    "type": "{crawl_type}",
+    "url": "{url}",
+    "url_pattern": "{url_pattern}",
+    "quantum_native": {quantum_native},{extra}
+}}
+
+if __name__ == '__main__':
+    crawler = BaseCrawler(SOURCE)
+    crawler.connect_db()
+    crawler.set_llm(get_llm())
+    new_count = crawler.run()
+    crawler.conn.close()
+    print(f'[OK] {{new_count}} new articles from {name}')
+'''
+
+
+def generate_source_file(result: dict, output_dir: str = None) -> str:
+    """Write a source file from detection result. Returns the file path."""
+    cfg = result['config']
+    if not cfg:
+        raise ValueError("No valid config to generate")
+
+    if output_dir is None:
+        output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sources')
+
+    # Derive filename from name
+    filename = cfg['name'].lower().replace(' ', '_').replace('-', '_') + '.py'
+    # Remove common suffixes
+    for suf in ['_quantum', '_quantum_ai', '_quantum_computing']:
+        if filename.endswith(suf + '.py'):
+            filename = filename[:-len(suf)] + '.py'
+
+    # Build extra config lines
+    extra_lines = []
+    max_pages = result.get('detection', {}).get('html', {}).get('pagination', {}).get('max_pages', 1)
+    if max_pages > 1:
+        extra_lines.append(f'"max_pages": {max_pages}')
+    page_template = cfg.get('page_url_template', '')
+    if page_template:
+        extra_lines.append(f'"page_url_template": "{page_template}"')
+
+    extra_str = ''
+    if extra_lines:
+        extra_str = '\n    ' + ',\n    '.join(extra_lines) + ','
+
+    content = SOURCE_TEMPLATE.format(
+        name=cfg['name'],
+        crawl_type=cfg.get('type', 'enterprise'),
+        url=cfg['url'],
+        url_pattern=cfg.get('url_pattern', '/'),
+        quantum_native=str(cfg.get('quantum_native', True)),
+        extra=extra_str,
+    )
+
+    os.makedirs(output_dir, exist_ok=True)
+    filepath = os.path.join(output_dir, filename)
+    with open(filepath, 'w', encoding='utf-8') as f:
+        f.write(content)
+    return filepath
+
+
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ('-h', '--help'):
         print(__doc__)
         print("Usage: python auto_detect.py <name> <url>")
+        print("       python auto_detect.py <name> <url> --generate")
         print("       python auto_detect.py --json <name> <url>")
-        print("\nExamples:")
-        print("  python auto_detect.py IonQ https://ionq.com/news")
-        print("  python auto_detect.py --test  # test against 5 known institutions")
+        print("       python auto_detect.py --test")
         sys.exit(0)
 
     if sys.argv[1] == '--json':
@@ -599,8 +667,12 @@ def main():
         _run_tests()
     else:
         name, url = sys.argv[1], sys.argv[2]
+        generate = '--generate' in sys.argv
         result = detect_source(name, url)
         _print_result(result)
+        if generate and result['config']:
+            path = generate_source_file(result)
+            print(f'\n  -> Source file written: {path}')
 
 
 def _run_tests():

@@ -8,7 +8,7 @@ SOURCE = {
     "name": "Classiq",
     "type": "enterprise",
     "url": "https://www.classiq.io/blog",
-    "url_pattern": "/blog/",
+    "url_pattern": "/",
     "quantum_native": True,
 }
 

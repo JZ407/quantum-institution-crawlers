@@ -8,8 +8,8 @@ SOURCE = {
     "name": "Atom Computing",
     "type": "enterprise",
     "url": "https://atom-computing.com/news",
-    "url_pattern": "/news/",
-    "quantum_native": True,
+    "url_pattern": "/category/media",
+    "quantum_native": False,
 }
 
 if __name__ == '__main__':

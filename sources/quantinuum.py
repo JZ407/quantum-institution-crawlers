@@ -8,9 +8,9 @@ SOURCE = {
     "name": "Quantinuum",
     "type": "enterprise",
     "url": "https://www.quantinuum.com/news/blog",
-    "url_pattern": "/blog/",
+    "url_pattern": "/news/blog",
     "quantum_native": True,
-        "max_pages": 5,
+    "max_pages": 5,
 }
 
 if __name__ == '__main__':

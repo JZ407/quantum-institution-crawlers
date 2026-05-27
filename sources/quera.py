@@ -8,8 +8,9 @@ SOURCE = {
     "name": "QuEra",
     "type": "enterprise",
     "url": "https://www.quera.com/news",
-    "url_pattern": "/news/",
+    "url_pattern": "/",
     "quantum_native": True,
+    "max_pages": 5,
 }
 
 if __name__ == '__main__':
