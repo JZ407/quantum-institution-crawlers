@@ -16,12 +16,7 @@ def extract_date(soup, text: str) -> str:
             if re.match(r'\d{4}-\d{2}-\d{2}', d):
                 return d
 
-    t = soup.find('time')
-    if t:
-        dt = t.get('datetime', '') or t.get_text(strip=True)
-        if dt:
-            return dt[:10] if re.match(r'\d{4}-\d{2}-\d{2}', dt[:10]) else dt
-
+    # 2. JSON-LD (more reliable than <time> which may be modified date)
     for script in soup.find_all('script', type='application/ld+json'):
         try:
             data = json.loads(script.string)
@@ -35,7 +30,19 @@ def extract_date(soup, text: str) -> str:
         except Exception:
             pass
 
-    return _extract_date_regex(text)
+    # 3. Text regex (often has publish date: \"16 February 2026\")
+    regex_date = _extract_date_regex(text)
+    if regex_date:
+        return regex_date
+
+    # 4. <time> element (last resort — often modified date, not publish date)
+    t = soup.find('time')
+    if t:
+        dt = t.get('datetime', '') or t.get_text(strip=True)
+        if dt:
+            return dt[:10] if re.match(r'\d{4}-\d{2}-\d{2}', dt[:10]) else dt
+
+    return ''
 
 
 def _extract_date_regex(text: str) -> str:

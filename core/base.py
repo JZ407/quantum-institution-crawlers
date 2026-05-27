@@ -92,9 +92,10 @@ class BaseCrawler:
                 return {'content': '', 'date': '', 'title': ''}
             soup = BeautifulSoup(resp.text, 'html.parser')
             body = extract_body(soup)
-            d = extract_date(soup, body) if body else ''
+            full_text = soup.get_text(separator='\n', strip=True)
+            d = extract_date(soup, full_text)
             t = extract_page_title(soup)
-            return {'content': body[:5000] if len(body) > 5000 else body,
+            return {'content': (body[:5000] if len(body) > 5000 else body) if body else full_text[:5000],
                     'date': d, 'title': t}
         except Exception:
             return {'content': '', 'date': '', 'title': ''}
