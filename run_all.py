@@ -41,7 +41,12 @@ def run_all():
 
 
 if __name__ == '__main__':
-    if len(sys.argv) > 1:
+    if len(sys.argv) > 1 and sys.argv[1] == '--log':
+        from core.db import view_log
+        source = sys.argv[2] if len(sys.argv) > 2 else None
+        limit = int(sys.argv[3]) if len(sys.argv) > 3 else 20
+        view_log(limit, source)
+    elif len(sys.argv) > 1:
         # Run specific institution
         name = sys.argv[1].lower()
         matched = [(m, d) for m, d in SOURCES if name in d.lower()]

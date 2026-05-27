@@ -34,62 +34,73 @@ class BaseCrawler:
         self.client = client
 
     def run(self, incremental: bool = True) -> int:
-        """Execute crawl and return number of new articles.
-        If incremental=True, stops early when no new articles found on a page,
-        and skips sitemap URLs older than last crawl.
-        """
+        """Execute crawl and return number of new articles."""
         if not self.conn:
             self.connect_db()
 
+        import time as _time
+        start_time = _time.time()
+        run_id = db_module.log_run_start(self.conn, self.name)
         last_crawl = self._last_crawl
+
         print(f'\n[CRAWL] {self.name}: {self.url}')
         if last_crawl:
             print(f'  Last crawl: {last_crawl} (incremental)')
 
-        if self.crawl_type == 'sitemap':
-            articles = self._crawl_sitemap(incremental, last_crawl)
-        elif self.crawl_type == 'atom':
-            articles = self._crawl_atom()
-        else:
-            articles = self._crawl_listing(incremental)
+        articles = []
+        error_msg = None
+        try:
+            if self.crawl_type == 'sitemap':
+                articles = self._crawl_sitemap(incremental, last_crawl)
+            elif self.crawl_type == 'atom':
+                articles = self._crawl_atom()
+            else:
+                articles = self._crawl_listing(incremental)
+        except Exception as e:
+            error_msg = str(e)
+            print(f'  ERROR: {e}')
 
         print(f'  Found {len(articles)} articles')
-        print(f'  Quantum-native (all {len(articles)} kept)')
+        if not error_msg:
+            print(f'  Quantum-native (all {len(articles)} kept)')
 
         new_count = 0
-        for art in articles:
-            if not db_module.is_new_url(self.conn, art['url']):
-                continue
+        if not error_msg:
+            for art in articles:
+                if not db_module.is_new_url(self.conn, art['url']):
+                    continue
 
-            detail = self._fetch_detail(art['url'])
-            content = detail['content']
-            pub_date = detail['date'] or art['date']
-            best_title = art['title']
-            if detail.get('title') and len(detail['title']) > len(best_title):
-                best_title = detail['title']
+                detail = self._fetch_detail(art['url'])
+                content = detail['content']
+                pub_date = detail['date'] or art['date']
+                best_title = art['title']
+                if detail.get('title') and len(detail['title']) > len(best_title):
+                    best_title = detail['title']
 
-            summary = content[:300].strip() if content else ''
-            summary_cn = ''
-            if content and self.client:
+                summary = content[:300].strip() if content else ''
+                summary_cn = ''
+                if content and self.client:
+                    try:
+                        cn_msg = [
+                            {"role": "system", "content": "你是量子科技翻译专家。请将以下英文文章内容总结为一句话中文摘要（100字以内）。只输出中文，不要解释。"},
+                            {"role": "user", "content": f"标题：{best_title}\n\n内容：{content[:2000]}"},
+                        ]
+                        summary_cn = self.client.chat(cn_msg).strip()
+                        if len(summary_cn) > 200:
+                            summary_cn = summary_cn[:200]
+                    except Exception:
+                        pass
+
                 try:
-                    cn_msg = [
-                        {"role": "system", "content": "你是量子科技翻译专家。请将以下英文文章内容总结为一句话中文摘要（100字以内）。只输出中文，不要解释。"},
-                        {"role": "user", "content": f"标题：{best_title}\n\n内容：{content[:2000]}"},
-                    ]
-                    summary_cn = self.client.chat(cn_msg).strip()
-                    if len(summary_cn) > 200:
-                        summary_cn = summary_cn[:200]
+                    db_module.insert_article(self.conn, best_title, content, art['url'],
+                                             self.name, pub_date, summary, summary_cn)
+                    new_count += 1
                 except Exception:
                     pass
 
-            try:
-                db_module.insert_article(self.conn, best_title, content, art['url'],
-                                         self.name, pub_date, summary, summary_cn)
-                new_count += 1
-            except Exception:
-                pass
-
         self.conn.commit()
+        duration = _time.time() - start_time
+        db_module.log_run_end(self.conn, run_id, len(articles), new_count, duration, error_msg)
         db_module.update_crawl_log(self.conn, self.name, len(articles), new_count)
         return new_count
 

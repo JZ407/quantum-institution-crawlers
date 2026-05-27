@@ -45,11 +45,23 @@ def insert_article(conn, title, content, url, source, publish_date, summary='', 
 def init_crawl_log():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+    # Latest state per source
     c.execute('''CREATE TABLE IF NOT EXISTS crawl_log (
         source TEXT PRIMARY KEY,
         last_crawled_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         articles_found INTEGER DEFAULT 0,
         articles_new INTEGER DEFAULT 0
+    )''')
+    # Full run history
+    c.execute('''CREATE TABLE IF NOT EXISTS crawl_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source TEXT NOT NULL,
+        started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        duration_sec REAL,
+        articles_found INTEGER DEFAULT 0,
+        articles_new INTEGER DEFAULT 0,
+        status TEXT DEFAULT 'ok',
+        error TEXT
     )''')
     conn.commit()
     return conn
@@ -62,8 +74,54 @@ def get_last_crawl(conn, source: str):
     return row['last_crawled_at'] if row else None
 
 
+def log_run_start(conn, source: str) -> int:
+    """Insert a run record and return its ID."""
+    c = conn.cursor()
+    c.execute("INSERT INTO crawl_runs (source, started_at) VALUES (?, datetime('now'))", (source,))
+    conn.commit()
+    return c.lastrowid
+
+
+def log_run_end(conn, run_id: int, articles_found: int, articles_new: int,
+                duration_sec: float, error: str = None):
+    """Update a run record with results."""
+    status = 'error' if error else 'ok'
+    c = conn.cursor()
+    c.execute('''UPDATE crawl_runs SET duration_sec=?, articles_found=?, articles_new=?,
+                 status=?, error=? WHERE id=?''',
+              (duration_sec, articles_found, articles_new, status, error, run_id))
+    conn.commit()
+
+
 def update_crawl_log(conn, source: str, articles_found: int, articles_new: int):
     c = conn.cursor()
     c.execute('''INSERT OR REPLACE INTO crawl_log (source, last_crawled_at, articles_found, articles_new)
-                 VALUES (?, datetime(\"now\"), ?, ?)''', (source, articles_found, articles_new))
+                 VALUES (?, datetime("now"), ?, ?)''', (source, articles_found, articles_new))
     conn.commit()
+
+
+def view_log(limit: int = 20, source: str = None):
+    """Print recent crawl run history."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    if source:
+        c.execute('''SELECT * FROM crawl_runs WHERE source=? ORDER BY id DESC LIMIT ?''',
+                  (source, limit))
+    else:
+        c.execute('''SELECT * FROM crawl_runs ORDER BY id DESC LIMIT ?''', (limit,))
+    rows = c.fetchall()
+    conn.close()
+
+    if not rows:
+        print('No crawl history yet.')
+        return
+
+    print(f'{"ID":>5} {"Source":<28s} {"Started":<19s} {"Dur":>6s} {"Found":>5s} {"New":>5s} {"Status"}')
+    print('-' * 85)
+    for r in reversed(rows):
+        dur = f'{r["duration_sec"]:.0f}s' if r['duration_sec'] else '?'
+        status = r['status']
+        if r['error']:
+            status += f' ({r["error"][:30]})'
+        print(f'{r["id"]:>5} {r["source"]:<28s} {r["started_at"]:<19s} {dur:>6s} {r["articles_found"]:>5} {r["articles_new"]:>5} {status}')
