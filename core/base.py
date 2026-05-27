@@ -77,24 +77,13 @@ class BaseCrawler:
                 if detail.get('title') and len(detail['title']) > len(best_title):
                     best_title = detail['title']
 
-                # LLM cleaning: remove breadcrumbs, nav, social buttons, author lines
+                # LLM: clean + restore paragraphs + generate CN summary (single call)
                 content = raw_content
-                if raw_content and self.client:
-                    content = self._clean_content(raw_content, best_title)
-
                 summary = content[:300].strip() if content else ''
                 summary_cn = ''
-                if content and self.client:
-                    try:
-                        cn_msg = [
-                            {"role": "system", "content": "你是量子科技翻译专家。请将以下英文文章内容总结为一句话中文摘要（100字以内）。只输出中文，不要解释。"},
-                            {"role": "user", "content": f"标题：{best_title}\n\n内容：{content[:2000]}"},
-                        ]
-                        summary_cn = self.client.chat(cn_msg).strip()
-                        if len(summary_cn) > 200:
-                            summary_cn = summary_cn[:200]
-                    except Exception:
-                        pass
+                if raw_content and self.client:
+                    content, summary_cn = self._clean_and_summarize(raw_content, best_title)
+                    summary = content[:300].strip() if content else ''
 
                 try:
                     db_module.insert_article(self.conn, best_title, content, art['url'],
@@ -109,8 +98,49 @@ class BaseCrawler:
         db_module.update_crawl_log(self.conn, self.name, len(articles), new_count)
         return new_count
 
-    # ---- Internal: LLM content cleaning ----
-    # Default tail noise patterns (can be overridden per source)
+    # ---- Internal: Unified LLM cleaning + summarization ----
+    def _clean_and_summarize(self, raw_text: str, title: str) -> tuple:
+        """Single LLM call on article head: clean noise, restore paragraphs, generate CN summary.
+        Tail (beyond ~4000 chars) is kept as-is after rule-based cut.
+        Returns (cleaned_text, summary_cn)."""
+        # 1. Rule-based tail cut first
+        text = self._clean_tail(raw_text)
+
+        # 2. For short articles, LLM the whole thing. For long, clean head only.
+        HEAD_LIMIT = 4000
+        head = text[:HEAD_LIMIT]
+        tail = text[HEAD_LIMIT:] if len(text) > HEAD_LIMIT else ''
+
+        try:
+            msg = [
+                {"role": "system", "content": (
+                    "你是量子科技文章编辑。请整理以下网页抓取的文本，并输出：\n\n"
+                    "[CLEANED]\n整理后的正文（恢复自然段落，去除噪音）\n[/CLEANED]\n"
+                    "[SUMMARY]\n一句中文摘要（100字内）\n[/SUMMARY]\n\n"
+                    "整理规则：删除导航面包屑、English/中文切换、社交按钮、作者署名。"
+                    "根据语义恢复自然段落。不要添加任何解释。"
+                )},
+                {"role": "user", "content": f"标题：{title}\n\n{head}"},
+            ]
+            resp = self.client.chat(msg).strip()
+
+            import re as _re
+            cm = _re.search(r'\[CLEANED\]\s*(.*?)\s*\[/CLEANED\]', resp, _re.DOTALL)
+            sm = _re.search(r'\[SUMMARY\]\s*(.*?)\s*\[/SUMMARY\]', resp, _re.DOTALL)
+            if cm:
+                cleaned = cm.group(1).strip() + tail
+                summary_cn = sm.group(1).strip()[:200] if sm else ''
+            else:
+                cleaned = resp + tail if resp else text
+                summary_cn = ''
+
+            if len(cleaned) < len(text) * 0.2 and len(text) > 500:
+                return text, summary_cn
+            return cleaned, summary_cn
+        except Exception:
+            return text, ''
+
+    # Default tail noise patterns
     DEFAULT_TAIL_PATTERNS = [
         r'\nView all posts by ',
         r'\nAbout the Author',
@@ -130,52 +160,21 @@ class BaseCrawler:
         r'\nYou may also like',
         r'\nRead more about',
         r'\nAuthor:',
+        r'\nTags\n',
+        r'\nLike\n',
+        r'\nAgentic AI',
     ]
 
     def _clean_tail(self, text: str) -> str:
-        """Rule-based removal of common footer noise.
-        Uses source-specific patterns if configured, otherwise defaults."""
+        """Rule-based removal of common footer noise."""
         import re
         cut_patterns = self.source.get('tail_cut_patterns', self.DEFAULT_TAIL_PATTERNS)
-        # Find the earliest cut point across all patterns
         cut_at = len(text)
         for pattern in cut_patterns:
             m = re.search(pattern, text)
             if m and m.start() < cut_at:
                 cut_at = m.start()
         return text[:cut_at] if cut_at < len(text) else text
-
-    def _clean_content(self, raw_text: str, title: str) -> str:
-        """LLM clean head + rule-based clean tail."""
-        # 1. Rule-based tail cleaning
-        text = self._clean_tail(raw_text)
-
-        # 2. Check if head needs LLM cleaning
-        noise_patterns = ['skip to main content', 'breadcrumb', 'share this',
-                          'english', '中文', 'like', 'discuss', 'L\nT\nF\nR\nE']
-        text_head = text[:1000].lower().replace('\n', ' ')
-        has_noise = sum(1 for p in noise_patterns if p in text_head) >= 2
-        if not has_noise:
-            return text
-
-        # 3. LLM clean the head only
-        try:
-            head = text[:3000]
-            middle = text[3000:] if len(text) > 3000 else ''
-            clean_msg = [
-                {"role": "system", "content": (
-                    "你是文本清洗工具。删除以下文章中的导航面包屑、语言切换(English/中文)、"
-                    "社交分享按钮(Like/Discuss/L/T/F/R/E)、作者署名行、\"Skip to main content\"。"
-                    "保留文章标题和正文。不添加任何解释，只输出清洗后的文本。"
-                )},
-                {"role": "user", "content": f"标题：{title}\n\n{head}"},
-            ]
-            cleaned_head = self.client.chat(clean_msg).strip()
-            if len(cleaned_head) < len(head) * 0.3:
-                return text
-            return cleaned_head + middle
-        except Exception:
-            return text
 
     # ---- Internal: fetch detail page ----
     def _fetch_detail(self, url: str) -> dict:
