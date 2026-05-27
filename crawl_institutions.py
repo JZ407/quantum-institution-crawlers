@@ -1,8 +1,10 @@
 """
 Crawl news from top quantum institutions. Stores in SQLite with quantum-relevance filter.
 """
-import sys, os, time, re, json, sqlite3
+import sys, os, time, re, json, sqlite3, argparse
 from datetime import datetime
+from email.utils import parsedate_to_datetime
+from urllib.parse import urlparse, urljoin
 import requests
 from bs4 import BeautifulSoup
 
@@ -100,18 +102,12 @@ SOURCES = [
         'quantum_native': True,
     },
     {
-        'name': 'PsiQuantum',
-        'type': 'sitemap',
-        'url': 'https://www.psiquantum.com/sitemap.xml',
-        'url_pattern': 'quantum',
-        'quantum_native': True,
-    },
-    {
         'name': 'OQC',
-        'type': 'atom',
-        'url': 'https://oqc.tech/feed/',
-        'url_pattern': '/',
+        'type': 'enterprise',
+        'url': 'https://oqc.tech/company/newsroom/',
+        'url_pattern': '/company/newsroom/',
         'quantum_native': True,
+        'max_pages': 8,
     },
     {
         'name': 'Q-CTRL',
@@ -171,7 +167,6 @@ def _parse_atom_date(date_str: str) -> str:
         return m.group(1)
     # Try RFC 2822: Wed, 21 Jan 2026 12:00:00 +0000
     try:
-        from email.utils import parsedate_to_datetime
         dt = parsedate_to_datetime(date_str)
         return dt.strftime('%Y-%m-%d')
     except Exception:
@@ -330,12 +325,13 @@ def _find_next_page(soup, base_url: str, current_page: int, page_template: str =
     # Priority 0: explicit URL template (for JS-button pagination like IBM)
     if page_template:
         return base_url + page_template.format(n=next_page)
-    # Priority 1: explicit _page=N (Quantinuum) or page=N query params
+    # Priority 1: explicit _page=N (Quantinuum/OQC) or page=N query params
     for a in soup.find_all('a', href=True):
         href = a['href']
         text = a.get_text(strip=True).lower()
+        # _page=N with navigation text (view more/next/older) or bare number
         if re.search(rf'_page={next_page}\b', href):
-            if any(k in text for k in ['view more', 'next', 'older']):
+            if any(k in text for k in ['view more', 'next', 'older']) or text.strip() == str(next_page):
                 if href.startswith('?'):
                     return base_url + href
                 if href.startswith('/'):
@@ -343,6 +339,7 @@ def _find_next_page(soup, base_url: str, current_page: int, page_template: str =
                 if href.startswith('http'):
                     return href
                 return requests.compat.urljoin(base_url, href)
+        # page=N or data-page=N with numbered links
         if re.search(rf'[?&]page={next_page}\b', href) or a.get('data-page') == str(next_page):
             if text.strip() == str(next_page) or 'page' in text:
                 if href.startswith('?') or href.startswith('/'):
@@ -570,72 +567,99 @@ def filter_quantum_llm(articles: list, source_name: str, client) -> list:
         return articles  # keep all if LLM fails
 
 
-def main():
-    conn = init_db()
+def crawl_one_source(src: dict, conn, client=None) -> int:
+    """Crawl a single source. Returns number of new articles saved."""
     c = conn.cursor()
-    client = get_llm()
-    total_new = 0
+    s_name = src['name']
+    s_url = src['url']
+    print(f'\n[CRAWL] {s_name}: {s_url}')
 
-    for src in SOURCES:
-        s_name = src['name']
-        s_url = src['url']
-        print(f'\n[CRAWL] {s_name}: {s_url}')
-        if src.get('type') == 'sitemap':
-            articles = crawl_sitemap(src)
-        elif src.get('type') == 'atom':
-            articles = crawl_atom(src)
-        else:
-            articles = crawl_listing(src)
-        print(f'  Found {len(articles)} articles')
+    if src.get('type') == 'sitemap':
+        articles = crawl_sitemap(src)
+    elif src.get('type') == 'atom':
+        articles = crawl_atom(src)
+    else:
+        articles = crawl_listing(src)
+    print(f'  Found {len(articles)} articles')
 
-        # Filter for quantum relevance (skip for quantum-native companies)
-        if src.get('quantum_native'):
-            relevant = articles
-            print(f'  Quantum-native (all {len(articles)} kept)')
-        else:
-            relevant = filter_quantum_llm(articles, s_name, client)
-            print(f'  Quantum-related: {len(relevant)}')
+    if src.get('quantum_native'):
+        relevant = articles
+        print(f'  Quantum-native (all {len(articles)} kept)')
+    elif client:
+        relevant = filter_quantum_llm(articles, s_name, client)
+        print(f'  Quantum-related: {len(relevant)}')
+    else:
+        relevant = articles
 
-        for art in relevant:
-            # Check if already in DB
-            c.execute('SELECT id FROM articles WHERE url=?', (art['url'],))
-            if c.fetchone():
-                continue
+    new_count = 0
+    for art in relevant:
+        c.execute('SELECT id FROM articles WHERE url=?', (art['url'],))
+        if c.fetchone():
+            continue
 
-            # Fetch detail
-            detail = fetch_detail(art['url'])
-            content = detail['content']
-            pub_date = detail['date'] or art['date']
-            # Prefer detail page title if listing title is short/generic
-            best_title = art['title']
-            if detail.get('title') and len(detail['title']) > len(best_title):
-                best_title = detail['title']
+        detail = fetch_detail(art['url'])
+        content = detail['content']
+        pub_date = detail['date'] or art['date']
+        best_title = art['title']
+        if detail.get('title') and len(detail['title']) > len(best_title):
+            best_title = detail['title']
 
-            # Generate Chinese summary via LLM
-            summary = content[:300].strip() if content else ''
-            summary_cn = ''
-            if content:
-                try:
-                    cn_msg = [
-                        {"role": "system", "content": "你是量子科技翻译专家。请将以下英文文章内容总结为一句话中文摘要（100字以内）。只输出中文，不要解释。"},
-                        {"role": "user", "content": f"标题：{best_title}\n\n内容：{content[:2000]}"},
-                    ]
-                    summary_cn = client.chat(cn_msg).strip()
-                    if len(summary_cn) > 200:  # sanity check
-                        summary_cn = summary_cn[:200]
-                except Exception:
-                    pass
-
+        summary = content[:300].strip() if content else ''
+        summary_cn = ''
+        if content and client:
             try:
-                c.execute('''INSERT INTO articles (title, content, url, source, publish_date, summary, summary_cn)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                         (best_title, content, art['url'], s_name, pub_date, summary, summary_cn))
-                total_new += 1
-            except sqlite3.IntegrityError:
+                cn_msg = [
+                    {"role": "system", "content": "你是量子科技翻译专家。请将以下英文文章内容总结为一句话中文摘要（100字以内）。只输出中文，不要解释。"},
+                    {"role": "user", "content": f"标题：{best_title}\n\n内容：{content[:2000]}"},
+                ]
+                summary_cn = client.chat(cn_msg).strip()
+                if len(summary_cn) > 200:
+                    summary_cn = summary_cn[:200]
+            except Exception:
                 pass
 
-        conn.commit()
-        time.sleep(1)
+        try:
+            c.execute('''INSERT INTO articles (title, content, url, source, publish_date, summary, summary_cn)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                     (best_title, content, art['url'], s_name, pub_date, summary, summary_cn))
+            new_count += 1
+        except sqlite3.IntegrityError:
+            pass
+
+    conn.commit()
+    return new_count
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Crawl quantum institution news')
+    parser.add_argument('--source', '-s', type=str, help='Crawl a specific institution by name')
+    parser.add_argument('--list', '-l', action='store_true', help='List all configured sources')
+    parser.add_argument('--no-llm', action='store_true', help='Skip LLM Chinese summary generation')
+    args = parser.parse_args()
+
+    if args.list:
+        for s in SOURCES:
+            n, t, u = s['name'], s['type'], s['url']
+            print(f'  {n:30s} | {t:10s} | {u}')
+        return
+
+    conn = init_db()
+    client = None if args.no_llm else get_llm()
+    total_new = 0
+
+    if args.source:
+        # Crawl specific institution (fuzzy match)
+        matched = [s for s in SOURCES if args.source.lower() in s['name'].lower()]
+        if not matched:
+            print(f'No source matching "{args.source}". Use --list to see available sources.')
+            conn.close()
+            return
+        for src in matched:
+            total_new += crawl_one_source(src, conn, client)
+    else:
+        for src in SOURCES:
+            total_new += crawl_one_source(src, conn, client)
+            time.sleep(1)
 
     conn.close()
     print(f'\n[OK] {total_new} new articles saved to {DB_PATH}')
