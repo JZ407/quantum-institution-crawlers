@@ -56,6 +56,77 @@ SOURCES = [
         'url_pattern': '/blog/',
         'quantum_native': True,
     },
+    # ---- Tier 2 ----
+    {
+        'name': 'IonQ',
+        'type': 'sitemap',
+        'url': 'https://www.ionq.com/sitemap.xml',
+        'url_pattern': 'quantum',
+        'quantum_native': True,
+    },
+    {
+        'name': 'Rigetti',
+        'type': 'sitemap',
+        'url': 'https://www.rigetti.com/sitemaps-1-sitemap.xml',
+        'url_pattern': 'quantum',
+        'quantum_native': True,
+    },
+    {
+        'name': 'PsiQuantum',
+        'type': 'sitemap',
+        'url': 'https://www.psiquantum.com/sitemap.xml',
+        'url_pattern': 'quantum',
+        'quantum_native': True,
+    },
+    {
+        'name': 'Atom Computing',
+        'type': 'enterprise',
+        'url': 'https://atom-computing.com/news',
+        'url_pattern': '/news/',
+        'quantum_native': True,
+    },
+    {
+        'name': 'QunaSys',
+        'type': 'enterprise',
+        'url': 'https://qunasys.com/news',
+        'url_pattern': '/news/',
+        'quantum_native': True,
+    },
+    {
+        'name': 'QuEra',
+        'type': 'enterprise',
+        'url': 'https://www.quera.com/news',
+        'url_pattern': '/news/',
+        'quantum_native': True,
+    },
+    {
+        'name': 'PsiQuantum',
+        'type': 'sitemap',
+        'url': 'https://www.psiquantum.com/sitemap.xml',
+        'url_pattern': 'quantum',
+        'quantum_native': True,
+    },
+    {
+        'name': 'OQC',
+        'type': 'atom',
+        'url': 'https://oqc.tech/feed/',
+        'url_pattern': '/',
+        'quantum_native': True,
+    },
+    {
+        'name': 'Q-CTRL',
+        'type': 'sitemap',
+        'url': 'https://q-ctrl.com/sitemap.xml',
+        'url_pattern': 'quantum',
+        'quantum_native': True,
+    },
+    {
+        'name': 'Classiq',
+        'type': 'enterprise',
+        'url': 'https://www.classiq.io/blog',
+        'url_pattern': '/blog/',
+        'quantum_native': True,
+    },
 ]
 
 
@@ -90,6 +161,31 @@ def get_llm():
                      model=cfg['model'], max_tokens=2048, timeout=120)
 
 
+def _parse_atom_date(date_str: str) -> str:
+    """Parse Atom/RSS date formats to YYYY-MM-DD."""
+    if not date_str:
+        return ''
+    # Try ISO 8601: 2026-05-27T12:00:00Z
+    m = re.match(r'(\d{4}-\d{2}-\d{2})', date_str)
+    if m:
+        return m.group(1)
+    # Try RFC 2822: Wed, 21 Jan 2026 12:00:00 +0000
+    try:
+        from email.utils import parsedate_to_datetime
+        dt = parsedate_to_datetime(date_str)
+        return dt.strftime('%Y-%m-%d')
+    except Exception:
+        pass
+    # Try common formats
+    for fmt in ['%d %b %Y', '%B %d, %Y', '%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%dT%H:%M:%SZ']:
+        try:
+            dt = datetime.strptime(date_str.strip(), fmt)
+            return dt.strftime('%Y-%m-%d')
+        except ValueError:
+            continue
+    return ''
+
+
 def crawl_atom(source: dict) -> list:
     """Crawl an Atom/RSS feed, return [{title, url, date}]."""
     try:
@@ -107,7 +203,8 @@ def crawl_atom(source: dict) -> list:
             if link_el:
                 link = link_el.get('href', '') or link_el.text or ''
             pub_el = entry.find('published') or entry.find('pubDate')
-            pub = pub_el.text if pub_el else ''
+            pub_raw = pub_el.text if pub_el else ''
+            pub = _parse_atom_date(pub_raw)
             if link and keyword in link.lower():
                 articles.append({
                     'title': title.strip(),
@@ -120,23 +217,59 @@ def crawl_atom(source: dict) -> list:
         return []
 
 
+def _is_article_url(url: str) -> bool:
+    """Check if a URL looks like an article (not a product/nav page)."""
+    path = urlparse(url).path.lower()
+    # Must contain a news/blog/article segment
+    article_patterns = ['/blog/', '/news/', '/press/', '/insight/', '/article/',
+                        '/post/', '/event/', '/story/', '/learn/', '/resource/',
+                        '/research/', '/news-import/']
+    for p in article_patterns:
+        if p in path:
+            # Exclude bare category/tag pages
+            if not path.rstrip('/').endswith(('/category', '/tag', '/author', '/page')):
+                return True
+    # Also match if it ends with a pattern word (e.g., /news, /research)
+    endings = ['/blog', '/news', '/press', '/insight', '/research']
+    for e in endings:
+        if path.rstrip('/').endswith(e):
+            return True
+    return False
+
+
 def crawl_sitemap(source: dict) -> list:
-    """Crawl a sitemap XML, filter URLs by url_pattern, return [{title, url, date}]."""
+    """Crawl a sitemap XML (or sitemap index), filter by url_pattern + article path.
+    Returns [{title, url, date}]."""
     try:
         resp = requests.get(source['url'], headers=HEADERS, timeout=30)
         if resp.status_code != 200:
             print(f'  HTTP {resp.status_code}')
             return []
         soup = BeautifulSoup(resp.text, 'xml')
-        articles = []
         keyword = source['url_pattern'].lower()
+
+        # If it's a sitemap index, find the news/blog sub-sitemap
+        sub_sitemaps = soup.find_all('sitemap')
+        if sub_sitemaps:
+            news_sm = None
+            for sm in sub_sitemaps:
+                loc = (sm.find('loc') or {}).text if sm.find('loc') else ''
+                if re.search(r'(blog|news|press|article|post)', loc, re.I):
+                    news_sm = loc
+                    break
+            if news_sm:
+                resp = requests.get(news_sm, headers=HEADERS, timeout=30)
+                if resp.status_code == 200:
+                    soup = BeautifulSoup(resp.text, 'xml')
+                else:
+                    return []
+
+        articles = []
         for url in soup.find_all('url'):
             loc = (url.find('loc') or {}).text if url.find('loc') else ''
             lastmod = (url.find('lastmod') or {}).text if url.find('lastmod') else ''
-            if keyword in loc.lower():
-                # Derive title from URL slug
+            if keyword in loc.lower() and _is_article_url(loc):
                 slug = loc.rstrip('/').rsplit('/', 1)[-1].replace('-', ' ')
-                # Make it title case
                 title = ' '.join(w[0].upper() + w[1:] if w else w for w in slug.split())
                 articles.append({'title': title, 'url': loc, 'date': lastmod[:10] if lastmod else ''})
         return articles
