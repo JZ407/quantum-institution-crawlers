@@ -100,16 +100,11 @@ class BaseCrawler:
 
     # ---- Internal: Unified LLM cleaning + summarization ----
     def _clean_and_summarize(self, raw_text: str, title: str) -> tuple:
-        """Single LLM call on article head: clean noise, restore paragraphs, generate CN summary.
-        Tail (beyond ~4000 chars) is kept as-is after rule-based cut.
+        """Single LLM call: full-text cleaning + paragraph restoration + CN summary.
         Returns (cleaned_text, summary_cn)."""
-        # 1. Rule-based tail cut first
         text = self._clean_tail(raw_text)
-
-        # 2. For short articles, LLM the whole thing. For long, clean head only.
-        HEAD_LIMIT = 4000
-        head = text[:HEAD_LIMIT]
-        tail = text[HEAD_LIMIT:] if len(text) > HEAD_LIMIT else ''
+        if not text:
+            return raw_text, ''
 
         try:
             msg = [
@@ -117,21 +112,23 @@ class BaseCrawler:
                     "你是量子科技文章编辑。请整理以下网页抓取的文本，并输出：\n\n"
                     "[CLEANED]\n整理后的正文（恢复自然段落，去除噪音）\n[/CLEANED]\n"
                     "[SUMMARY]\n一句中文摘要（100字内）\n[/SUMMARY]\n\n"
-                    "整理规则：删除导航面包屑、English/中文切换、社交按钮、作者署名。"
-                    "根据语义恢复自然段落。不要添加任何解释。"
+                    "整理规则：删除导航面包屑、English/中文切换、社交按钮、作者署名、"
+                    "文末作者简介/评论/相关文章推荐/Tags标签。根据语义恢复自然段落。"
+                    "不要添加任何解释。"
                 )},
-                {"role": "user", "content": f"标题：{title}\n\n{head}"},
+                {"role": "user", "content": f"标题：{title}\n\n{text}"},
             ]
-            resp = self.client.chat(msg).strip()
+            # Full article needs more output tokens
+            resp = self.client.chat(msg, max_tokens=8192).strip()
 
             import re as _re
             cm = _re.search(r'\[CLEANED\]\s*(.*?)\s*\[/CLEANED\]', resp, _re.DOTALL)
             sm = _re.search(r'\[SUMMARY\]\s*(.*?)\s*\[/SUMMARY\]', resp, _re.DOTALL)
             if cm:
-                cleaned = cm.group(1).strip() + tail
+                cleaned = cm.group(1).strip()
                 summary_cn = sm.group(1).strip()[:200] if sm else ''
             else:
-                cleaned = resp + tail if resp else text
+                cleaned = resp
                 summary_cn = ''
 
             if len(cleaned) < len(text) * 0.2 and len(text) > 500:
@@ -160,20 +157,18 @@ class BaseCrawler:
         r'\nYou may also like',
         r'\nRead more about',
         r'\nAuthor:',
-        r'\nTags\n',
-        r'\nLike\n',
-        r'\nAgentic AI',
     ]
 
     def _clean_tail(self, text: str) -> str:
-        """Rule-based removal of common footer noise."""
+        """Rule-based removal of footer noise. Only matches in the last 40% of text."""
         import re
         cut_patterns = self.source.get('tail_cut_patterns', self.DEFAULT_TAIL_PATTERNS)
+        tail_start = int(len(text) * 0.6)  # Only search the tail half
         cut_at = len(text)
         for pattern in cut_patterns:
-            m = re.search(pattern, text)
-            if m and m.start() < cut_at:
-                cut_at = m.start()
+            for m in re.finditer(pattern, text):
+                if m.start() >= tail_start and m.start() < cut_at:
+                    cut_at = m.start()
         return text[:cut_at] if cut_at < len(text) else text
 
     # ---- Internal: fetch detail page ----

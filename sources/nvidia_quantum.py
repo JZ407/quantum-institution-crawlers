@@ -10,6 +10,10 @@ SOURCE = {
     "url": "https://developer.nvidia.com/blog/tag/quantum-computing/feed/",
     "url_pattern": "/blog/",
     "quantum_native": True,
+    "tail_cut_patterns": [
+        r'\nLike\n',
+        r'\nTags\n',
+    ],
 }
 
 if __name__ == '__main__':
