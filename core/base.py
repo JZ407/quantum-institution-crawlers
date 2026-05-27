@@ -27,23 +27,31 @@ class BaseCrawler:
 
     def connect_db(self):
         self.conn = db_module.init_db()
+        db_module.init_crawl_log()
+        self._last_crawl = db_module.get_last_crawl(self.conn, self.name)
 
     def set_llm(self, client):
         self.client = client
 
-    def run(self) -> int:
-        """Execute crawl and return number of new articles."""
+    def run(self, incremental: bool = True) -> int:
+        """Execute crawl and return number of new articles.
+        If incremental=True, stops early when no new articles found on a page,
+        and skips sitemap URLs older than last crawl.
+        """
         if not self.conn:
             self.connect_db()
 
+        last_crawl = self._last_crawl
         print(f'\n[CRAWL] {self.name}: {self.url}')
+        if last_crawl:
+            print(f'  Last crawl: {last_crawl} (incremental)')
 
         if self.crawl_type == 'sitemap':
-            articles = self._crawl_sitemap()
+            articles = self._crawl_sitemap(incremental, last_crawl)
         elif self.crawl_type == 'atom':
             articles = self._crawl_atom()
         else:
-            articles = self._crawl_listing()
+            articles = self._crawl_listing(incremental)
 
         print(f'  Found {len(articles)} articles')
         print(f'  Quantum-native (all {len(articles)} kept)')
@@ -82,6 +90,7 @@ class BaseCrawler:
                 pass
 
         self.conn.commit()
+        db_module.update_crawl_log(self.conn, self.name, len(articles), new_count)
         return new_count
 
     # ---- Internal: fetch detail page ----
@@ -125,7 +134,7 @@ class BaseCrawler:
             return []
 
     # ---- Internal: Sitemap ----
-    def _crawl_sitemap(self) -> list:
+    def _crawl_sitemap(self, incremental: bool = True, last_crawl: str = None) -> list:
         try:
             resp = requests.get(self.url, headers=HEADERS, timeout=30)
             if resp.status_code != 200:
@@ -150,20 +159,28 @@ class BaseCrawler:
                         return []
 
             articles = []
+            skipped_old = 0
             for url_el in soup.find_all('url'):
                 loc = (url_el.find('loc') or {}).text if url_el.find('loc') else ''
                 lastmod = (url_el.find('lastmod') or {}).text if url_el.find('lastmod') else ''
+                # Incremental: skip URLs older than last crawl
+                if incremental and last_crawl and lastmod:
+                    if lastmod[:10] <= last_crawl[:10]:
+                        skipped_old += 1
+                        continue
                 if keyword in loc.lower() and is_article_url(loc):
                     slug = loc.rstrip('/').rsplit('/', 1)[-1].replace('-', ' ')
                     title = ' '.join(w[0].upper() + w[1:] if w else w for w in slug.split())
                     articles.append({'title': title, 'url': loc, 'date': lastmod[:10] if lastmod else ''})
+            if skipped_old:
+                print(f'  Skipped {skipped_old} old URLs (before {last_crawl[:10]})')
             return articles
         except Exception as e:
             print(f'  Error: {e}')
             return []
 
     # ---- Internal: HTML listing ----
-    def _crawl_listing(self) -> list:
+    def _crawl_listing(self, incremental: bool = True) -> list:
         try:
             resp = requests.get(self.url, headers=HEADERS, timeout=20)
             if resp.status_code != 200:
@@ -186,16 +203,24 @@ class BaseCrawler:
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 new_articles = self._extract_articles_from_soup(soup, next_url)
                 added = 0
+                db_new = 0
                 for art in new_articles:
                     if art['url'] not in seen_urls:
                         seen_urls.add(art['url'])
                         articles.append(art)
                         added += 1
+                        if db_module.is_new_url(self.conn, art['url']):
+                            db_new += 1
+                # Incremental: stop when page has no genuinely new (not in DB) articles
+                if incremental and db_new == 0:
+                    break
                 if added == 0:
                     break
             return articles
         except Exception as e:
+            import traceback
             print(f'  Error: {e}')
+            traceback.print_exc()
             return []
 
     def _extract_articles_from_soup(self, soup, base_url: str) -> list:

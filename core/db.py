@@ -40,3 +40,30 @@ def insert_article(conn, title, content, url, source, publish_date, summary='', 
                 VALUES (?, ?, ?, ?, ?, ?, ?)''',
              (title, content, url, source, publish_date, summary, summary_cn))
     conn.commit()
+
+
+def init_crawl_log():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS crawl_log (
+        source TEXT PRIMARY KEY,
+        last_crawled_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        articles_found INTEGER DEFAULT 0,
+        articles_new INTEGER DEFAULT 0
+    )''')
+    conn.commit()
+    return conn
+
+
+def get_last_crawl(conn, source: str):
+    c = conn.cursor()
+    c.execute('SELECT last_crawled_at FROM crawl_log WHERE source = ?', (source,))
+    row = c.fetchone()
+    return row['last_crawled_at'] if row else None
+
+
+def update_crawl_log(conn, source: str, articles_found: int, articles_new: int):
+    c = conn.cursor()
+    c.execute('''INSERT OR REPLACE INTO crawl_log (source, last_crawled_at, articles_found, articles_new)
+                 VALUES (?, datetime(\"now\"), ?, ?)''', (source, articles_found, articles_new))
+    conn.commit()
