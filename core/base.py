@@ -345,12 +345,12 @@ class BaseCrawler:
                 continue
             d = ''
             parent = a.parent
-            for _ in range(3):
+            for _ in range(5):
                 if not parent:
                     break
-                for el in parent.find_all(['time', 'span', 'div', 'p']):
+                for el in parent.find_all(['time', 'span', 'div', 'p', 'li', 'article', 'section']):
                     text = el.get_text(strip=True)
-                    d = extract_date(None, text)  # None soup: skip meta check, use regex only
+                    d = extract_date(None, text)
                     if d:
                         break
                 if d:

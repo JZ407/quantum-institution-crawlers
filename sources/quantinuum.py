@@ -5,12 +5,12 @@ from core.base import BaseCrawler
 from core.llm import get_llm
 
 SOURCE = {
-    "name": "Quantinuum",
+    "name": "Quantinuum Blog",
     "type": "enterprise",
     "url": "https://www.quantinuum.com/news/blog",
     "url_pattern": "/blog/",
     "quantum_native": True,
-    "max_pages": 5,
+    "max_pages": 30,
 }
 
 if __name__ == '__main__':

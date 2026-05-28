@@ -134,9 +134,9 @@ def parse_atom_date(date_str: str) -> str:
 def is_article_url(url: str) -> bool:
     """Check if a URL looks like an article (not a product/nav page)."""
     path = urlparse(url).path.lower()
-    article_patterns = ['/blog/', '/news/', '/press/', '/insight/', '/article/',
-                        '/post/', '/event/', '/story/', '/learn/', '/resource/',
-                        '/research/', '/news-import/',
+    article_patterns = ['/blog/', '/news/', '/press/', '/press-releases/', '/insight/',
+                        '/article/', '/post/', '/event/', '/story/', '/learn/',
+                        '/resource/', '/research/', '/news-import/',
                         '/innovation-and-ai/', '/technology/', '/security/']
     for p in article_patterns:
         if p in path:

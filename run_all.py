@@ -5,7 +5,8 @@ from core.llm import get_llm
 
 SOURCES = [
     ('sources.ibm_quantum', 'IBM Quantum'),
-    ('sources.quantinuum', 'Quantinuum'),
+    ('sources.quantinuum', 'Quantinuum Blog'),
+    ('sources.quantinuum_press', 'Quantinuum Press'),
     ('sources.google_quantum_ai', 'Google Quantum AI'),
     ('sources.microsoft_azure_quantum', 'Microsoft Azure Quantum'),
     ('sources.nvidia_quantum', 'NVIDIA Quantum'),

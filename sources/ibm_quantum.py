@@ -10,7 +10,7 @@ SOURCE = {
     "url": "https://www.ibm.com/quantum/blog",
     "url_pattern": "/quantum/blog",
     "quantum_native": True,
-    "max_pages": 5,
+    "max_pages": 13,
     "page_url_template": "?page={n}",
     "tail_cut_patterns": [
         r'\nView pricing\n',
