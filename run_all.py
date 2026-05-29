@@ -1,13 +1,15 @@
-"""Run all institution crawlers."""
-import sys, os, time
+"""Run all institution crawlers - each source runs standalone."""
+import sys, os, time, runpy
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from core.llm import get_llm
 
 SOURCES = [
-    ('sources.ibm_quantum', 'IBM Quantum'),
+    ('sources.ibm_quantum_blog', 'IBM Quantum Blog'),
+    ('sources.ibm_quantum_pr', 'IBM Quantum PR'),
     ('sources.quantinuum_blog', 'Quantinuum Blog'),
     ('sources.quantinuum_press', 'Quantinuum Press'),
-    ('sources.google_quantum_ai', 'Google Quantum AI'),
+    ('sources.google_quantum_blog', 'Google Quantum AI'),
+    ('sources.google_quantum_research', 'Google Quantum Research'),
     ('sources.microsoft_azure_quantum', 'Microsoft Azure Quantum'),
     ('sources.nvidia_quantum', 'NVIDIA Quantum'),
     ('sources.ionq', 'IonQ'),
@@ -23,22 +25,18 @@ SOURCES = [
 
 
 def run_all():
-    client = get_llm()
-    total_new = 0
+    total_ok = 0
+    total_fail = 0
     for mod_name, display_name in SOURCES:
         try:
-            mod = __import__(mod_name, fromlist=['SOURCE'])
-            from core.base import BaseCrawler
-            crawler = BaseCrawler(mod.SOURCE)
-            crawler.connect_db()
-            crawler.set_llm(client)
-            new_count = crawler.run()
-            crawler.conn.close()
-            total_new += new_count
+            print(f'\n{"="*50}')
+            runpy.run_module(mod_name, run_name='__main__')
+            total_ok += 1
             time.sleep(1)
         except Exception as e:
+            total_fail += 1
             print(f'  ERROR ({display_name}): {e}')
-    print(f'\n[OK] {total_new} new articles total')
+    print(f'\n[OK] {total_ok} succeeded, {total_fail} failed')
 
 
 if __name__ == '__main__':
@@ -48,19 +46,11 @@ if __name__ == '__main__':
         limit = int(sys.argv[3]) if len(sys.argv) > 3 else 20
         view_log(limit, source)
     elif len(sys.argv) > 1:
-        # Run specific institution
         name = sys.argv[1].lower()
         matched = [(m, d) for m, d in SOURCES if name in d.lower()]
         if matched:
             mod_name, display_name = matched[0]
-            mod = __import__(mod_name, fromlist=['SOURCE'])
-            from core.base import BaseCrawler
-            crawler = BaseCrawler(mod.SOURCE)
-            crawler.connect_db()
-            crawler.set_llm(get_llm())
-            new_count = crawler.run()
-            crawler.conn.close()
-            print(f'\n[OK] {new_count} new articles from {display_name}')
+            runpy.run_module(mod_name, run_name='__main__')
         else:
             print(f'No source matching "{sys.argv[1]}"')
     else:
