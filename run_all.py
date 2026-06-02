@@ -21,6 +21,8 @@ SOURCES = [
     ('sources.atom_computing', 'Atom Computing'),
     ('sources.qunasys', 'QunaSys'),
     ('sources.classiq', 'Classiq'),
+    ('sources.alice_bob_blog', 'Alice & Bob Blog'),
+    ('sources.alice_bob_newsroom', 'Alice & Bob Newsroom'),
 ]
 
 
