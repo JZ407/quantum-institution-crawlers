@@ -11,6 +11,7 @@ from bs4 import BeautifulSoup
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.db import DB_PATH, init_db, is_new_url
+from core.llm import get_llm
 
 HEADERS = {
     'User-Agent': (
@@ -178,6 +179,7 @@ if __name__ == '__main__':
     print(f'  Discovered {len(posts)} blog posts')
 
     conn = init_db()
+    client = get_llm()
     new_count, skip_count = 0, 0
 
     for i, p in enumerate(posts):
@@ -196,10 +198,25 @@ if __name__ == '__main__':
             print(f'    [WARN] Empty content, skipping')
             continue
 
+        # Summary
+        summary = content[:300].strip() if content else ''
+
+        # Chinese title translation
+        title_cn = ''
+        if title and client and not any('一' <= c <= '鿿' for c in title[:20]):
+            try:
+                tn_msg = [
+                    {'role': 'system', 'content': '将以下英文新闻标题翻译为中文。只输出中文，不要解释。'},
+                    {'role': 'user', 'content': title},
+                ]
+                title_cn = client.chat(tn_msg).strip()[:200]
+            except Exception:
+                pass
+
         # Insert
         conn.execute(
-            'INSERT OR IGNORE INTO articles (title, content, url, source, publish_date) VALUES (?, ?, ?, ?, ?)',
-            (title, content, p['url'], SOURCE_NAME, date)
+            'INSERT OR IGNORE INTO articles (title, content, url, source, publish_date, summary, title_cn) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            (title, content, p['url'], SOURCE_NAME, date, summary, title_cn),
         )
         new_count += 1
         time.sleep(1)  # polite delay
