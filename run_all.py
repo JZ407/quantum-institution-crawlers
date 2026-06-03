@@ -40,6 +40,14 @@ def run_all():
             print(f'  ERROR ({display_name}): {e}')
     print(f'\n[OK] {total_ok} succeeded, {total_fail} failed')
 
+    # Sync to OneDrive
+    try:
+        sys.path.insert(0, 'D:/Claude_code/liangke_daily/core')
+        from sync_to_onedrive import sync_all
+        sync_all()
+    except Exception as e:
+        print(f'  [WARN] OneDrive sync failed: {e}')
+
 
 if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1] == '--log':
