@@ -23,6 +23,7 @@ SOURCES = [
     ('sources.classiq', 'Classiq'),
     ('sources.alice_bob_blog', 'Alice & Bob Blog'),
     ('sources.alice_bob_newsroom', 'Alice & Bob Newsroom'),
+    ('sources.dwave', 'D-Wave Press'),
 ]
 
 
