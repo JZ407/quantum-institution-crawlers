@@ -24,7 +24,7 @@ SOURCE_NAME = 'Alice & Bob Newsroom'
 PER_PAGE = 50
 
 
-def discover_posts():
+def discover_posts(conn):
     """Discover newsroom posts via WP REST API custom post type 'news'."""
     all_posts = []
     page = 1
@@ -59,8 +59,11 @@ def discover_posts():
         total_pages = int(resp.headers.get('X-WP-TotalPages', '0'))
         if page >= total_pages or len(posts) < PER_PAGE:
             break
+        if new_on_page == 0 and page > 1:
+            print(f'  -> All posts on page {page} already in DB, stopping')
+            break
         page += 1
-        time.sleep(0.5)
+        time.sleep(2)
 
     return all_posts
 
@@ -157,7 +160,7 @@ def fetch_detail(url):
 
 if __name__ == '__main__':
     print(f'[CRAWL] {SOURCE_NAME}: WP REST API /news')
-    posts = discover_posts()
+    posts = discover_posts(conn)
     print(f'  Discovered {len(posts)} newsroom posts')
 
     conn = init_db()

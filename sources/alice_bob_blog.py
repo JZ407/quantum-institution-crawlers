@@ -25,8 +25,21 @@ PER_PAGE = 50   # WP REST API max per_page
 # Custom post type: 'blog' (not 'posts')
 
 
-def discover_posts():
-    """Discover all blog posts via WP REST API with pagination."""
+def discover_posts(conn):
+    """Discover NEW blog posts via WP REST API with early termination.
+
+    WP API returns posts newest-first. Once we see a post already in DB,
+    we can stop — everything older is already scraped.
+    """
+    # Load known URLs from DB for early termination
+    known_urls = set()
+    try:
+        c = conn.cursor()
+        c.execute('SELECT url FROM articles WHERE source = ?', (SOURCE_NAME,))
+        known_urls = set(r[0] for r in c.fetchall())
+    except Exception:
+        pass
+
     all_posts = []
     page = 1
 
@@ -52,6 +65,7 @@ def discover_posts():
         if not posts or not isinstance(posts, list):
             break
 
+        new_on_page = 0
         for p in posts:
             title = p.get('title', {})
             if isinstance(title, dict):
@@ -59,10 +73,15 @@ def discover_posts():
             else:
                 title = str(title)
 
-            date = p.get('date', '')[:10]  # YYYY-MM-DD
+            post_url = p.get('link', '')
+            date = p.get('date', '')[:10]
 
+            if post_url in known_urls:
+                continue  # Skip, but keep checking — some might be new on same page
+
+            new_on_page += 1
             all_posts.append({
-                'url': p.get('link', ''),
+                'url': post_url,
                 'date': date,
                 'title': title.strip(),
             })
@@ -70,8 +89,14 @@ def discover_posts():
         total_pages = int(resp.headers.get('X-WP-TotalPages', '0'))
         if page >= total_pages or len(posts) < PER_PAGE:
             break
+
+        # Early termination: if this page had NO new posts, the rest won't either
+        if new_on_page == 0 and page > 1:
+            print(f'  -> All posts on page {page} already in DB, stopping')
+            break
+
         page += 1
-        time.sleep(0.5)
+        time.sleep(2)  # polite delay between API pages
 
     return all_posts
 
@@ -175,7 +200,7 @@ def fetch_detail(url):
 
 if __name__ == '__main__':
     print(f'[CRAWL] {SOURCE_NAME}: WP REST API')
-    posts = discover_posts()
+    posts = discover_posts(conn)
     print(f'  Discovered {len(posts)} blog posts')
 
     conn = init_db()
