@@ -10,7 +10,7 @@ from bs4 import BeautifulSoup
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.llm import get_llm
-from core.db import DB_PATH, init_db, is_new_url
+from core.db import DB_PATH, init_db, is_new_url, load_known_urls_all
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -219,6 +219,7 @@ def fetch_detail(url, source_type='press'):
 
 def scrape_articles(articles, source_name, conn, llm):
     """Process a list of article entries: fetch detail, insert to DB."""
+    known_urls = load_known_urls_all(conn)
     stats = {'new': 0, 'skipped': 0, 'errors': 0}
 
     for i, entry in enumerate(articles, 1):
@@ -226,7 +227,7 @@ def scrape_articles(articles, source_name, conn, llm):
         slug = url.rstrip('/').split('/')[-1]
         print(f"\n[{i}/{len(articles)}] {slug[:70]}")
 
-        if not is_new_url(conn, url):
+        if url in known_urls:
             print(f"  -> SKIPPED (already in DB)")
             stats['skipped'] += 1
             continue

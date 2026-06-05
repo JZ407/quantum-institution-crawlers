@@ -119,7 +119,7 @@ if __name__ == '__main__':
 
     conn = init_db()
     # Load known URLs for fast in-memory dedup
-    known_urls = load_known_urls(conn, 'IonQ')
+    known_urls = load_known_urls_all(conn)
     client = get_llm()
 
     print(f'\n--- IonQ News ({len(news_urls)} URLs) ---')
