@@ -38,6 +38,22 @@ def is_new_url(conn, url: str) -> bool:
     c.execute('SELECT id FROM articles WHERE url=?', (url,))
     return c.fetchone() is None
 
+
+def load_known_urls(conn, source: str) -> set:
+    """Return set of URLs already in DB for a given source.
+    Used for early termination in pagination loops.
+    """
+    c = conn.cursor()
+    c.execute('SELECT url FROM articles WHERE source = ?', (source,))
+    return set(r[0] for r in c.fetchall())
+
+
+def load_known_urls_all(conn) -> set:
+    """Return set of ALL URLs in DB (for multi-source crawlers)."""
+    c = conn.cursor()
+    c.execute('SELECT url FROM articles')
+    return set(r[0] for r in c.fetchall())
+
 def insert_article(conn, title, content, url, source, publish_date, summary='', title_cn=''):
     c = conn.cursor()
     c.execute('''INSERT INTO articles (title, content, url, source, publish_date, summary, title_cn)

@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.llm import get_llm
-from core.db import DB_PATH, init_db, is_new_url
+from core.db import DB_PATH, init_db, is_new_url, load_known_urls
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -70,7 +70,7 @@ def fetch_detail(url):
 def process_urls(urls, source_name, conn, client):
     new_count = 0
     for url in urls:
-        if not is_new_url(conn, url):
+        if url in known_urls:
             continue
 
         detail = fetch_detail(url)
@@ -118,6 +118,8 @@ if __name__ == '__main__':
     print(f'  News: {len(news_urls)}, Blog: {len(blog_urls)}, Total: {len(news_urls) + len(blog_urls)}')
 
     conn = init_db()
+    # Load known URLs for fast in-memory dedup
+    known_urls = load_known_urls(conn, 'IonQ')
     client = get_llm()
 
     print(f'\n--- IonQ News ({len(news_urls)} URLs) ---')

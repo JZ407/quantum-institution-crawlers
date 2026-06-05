@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.llm import get_llm
-from core.db import DB_PATH, init_db, is_new_url
+from core.db import DB_PATH, init_db, is_new_url, load_known_urls
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -127,6 +127,8 @@ if __name__ == '__main__':
     print(f'  News: {len(news_articles)}, Research: {len(research_articles)}, Total: {len(news_articles) + len(research_articles)}')
 
     conn = init_db()
+    # Load known URLs for fast in-memory dedup
+    known_urls = load_known_urls(conn, 'Rigetti')
     client = get_llm()
 
     print(f'\n--- Rigetti News ({len(news_articles)} URLs) ---')

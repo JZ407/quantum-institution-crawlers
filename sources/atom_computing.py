@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.llm import get_llm
-from core.db import DB_PATH, init_db, is_new_url
+from core.db import DB_PATH, init_db, is_new_url, load_known_urls
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -174,13 +174,15 @@ if __name__ == '__main__':
     print(f'  Scientific Publications: {len(publications)}')
 
     conn = init_db()
+    # Load known URLs for fast dedup (in-memory instead of per-URL SQL query)
+    known_urls = load_known_urls(conn, 'Atom Computing')
     client = get_llm()
     total_new = 0
 
     # Press releases - full detail fetch
     print(f'\n--- Atom Computing News ({len(press_releases)} URLs) ---')
     for art in press_releases:
-        if not is_new_url(conn, art['url']):
+        if art['url'] in known_urls:
             continue
 
         detail = fetch_detail(art['url'])
@@ -217,7 +219,7 @@ if __name__ == '__main__':
     # Scientific publications - title + link only (no detail fetch)
     print(f'\n--- Atom Computing Publications ({len(publications)} URLs) ---')
     for pub in publications:
-        if not is_new_url(conn, pub['url']):
+        if pub['url'] in known_urls:
             continue
 
         content = pub.get('journal', '')

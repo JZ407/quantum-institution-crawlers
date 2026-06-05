@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.llm import get_llm
-from core.db import DB_PATH, init_db, is_new_url
+from core.db import DB_PATH, init_db, is_new_url, load_known_urls
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -124,6 +124,8 @@ if __name__ == '__main__':
     print(f'  Newsroom: {len(newsroom)}, Resources: {len(resources)}, Total: {len(newsroom) + len(resources)}')
 
     conn = init_db()
+    # Load known URLs for fast in-memory dedup
+    known_urls = load_known_urls(conn, 'OQC')
     client = get_llm()
 
     print(f'\n--- OQC Newsroom ({len(newsroom)} URLs) ---')

@@ -6,7 +6,7 @@ from urllib.parse import urljoin
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.llm import get_llm
-from core.db import DB_PATH, init_db, is_new_url
+from core.db import DB_PATH, init_db, is_new_url, load_known_urls
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -126,11 +126,13 @@ if __name__ == '__main__':
     print(f'  Total: {len(articles)} unique PRs')
 
     conn = init_db()
+    # Load known URLs for fast dedup (in-memory instead of per-URL SQL query)
+    known_urls = load_known_urls(conn, 'IBM Quantum PR')
     client = get_llm()
     new_count = 0
 
     for url, listing_text in articles.items():
-        if not is_new_url(conn, url):
+        if url in known_urls:
             continue
 
         detail = fetch_detail(url)
