@@ -200,10 +200,9 @@ def fetch_detail(url):
 
 if __name__ == '__main__':
     print(f'[CRAWL] {SOURCE_NAME}: WP REST API')
+    conn = init_db()
     posts = discover_posts(conn)
     print(f'  Discovered {len(posts)} blog posts')
-
-    conn = init_db()
     client = get_llm()
     new_count, skip_count = 0, 0
 

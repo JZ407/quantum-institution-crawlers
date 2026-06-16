@@ -26,6 +26,15 @@ PER_PAGE = 50
 
 def discover_posts(conn):
     """Discover newsroom posts via WP REST API custom post type 'news'."""
+    # Load known URLs for early termination
+    known_urls = set()
+    try:
+        c = conn.cursor()
+        c.execute('SELECT url FROM articles WHERE source = ?', (SOURCE_NAME,))
+        known_urls = set(r[0] for r in c.fetchall())
+    except Exception:
+        pass
+
     all_posts = []
     page = 1
 
@@ -46,10 +55,15 @@ def discover_posts(conn):
         if not posts:
             break
 
+        new_on_page = 0
         for p in posts:
             title = p.get('title', {})
             if isinstance(title, dict):
                 title = title.get('rendered', '')
+            post_url = p.get('link', '')
+            if post_url in known_urls:
+                continue
+            new_on_page += 1
             all_posts.append({
                 'url': p.get('link', ''),
                 'date': p.get('date', '')[:10],
@@ -160,10 +174,9 @@ def fetch_detail(url):
 
 if __name__ == '__main__':
     print(f'[CRAWL] {SOURCE_NAME}: WP REST API /news')
+    conn = init_db()
     posts = discover_posts(conn)
     print(f'  Discovered {len(posts)} newsroom posts')
-
-    conn = init_db()
     client = get_llm()
     new_count, skip_count = 0, 0
 
