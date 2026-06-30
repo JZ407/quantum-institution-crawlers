@@ -129,7 +129,7 @@ if __name__ == '__main__':
 
     # Publications
     print(f'\n--- Google Research Papers ({len(pub_urls)} URLs) ---')
-    pub_new = process_urls(pub_urls, 'Google Research Papers', conn, client)
+    pub_new = process_urls(pub_urls, 'Google Research Papers', conn, None)  # skip LLM translation for papers
 
     conn.close()
     print(f'\n[OK] {blog_new} new blog posts + {pub_new} new papers = {blog_new + pub_new} total')
